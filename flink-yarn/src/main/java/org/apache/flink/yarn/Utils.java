@@ -759,6 +759,7 @@ public final class Utils {
                 }
             }
         }
+        yarnConfig.set("fs.defaultFS", "hdfs://192.168.40.151:9000");
 
         return yarnConfig;
     }

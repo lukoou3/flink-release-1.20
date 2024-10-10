@@ -1,0 +1,7 @@
+<?xml version="1.0"?>
+<configuration>
+	<property>
+		<name>yarn.resourcemanager.address</name>
+		<value>192.168.40.152:8032</value>
+	</property>
+</configuration>

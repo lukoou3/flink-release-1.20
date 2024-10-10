@@ -1333,7 +1333,9 @@ public class CliFrontend {
         int retCode = INITIAL_RET_CODE;
         try {
             retCode = mainInternal(args);
-        } finally {
+        } catch (Throwable t){
+            t.printStackTrace();
+        } finally{
             System.exit(retCode);
         }
     }
