@@ -128,7 +128,7 @@ under the License.
 		<flink.shaded.version>17.0</flink.shaded.version>
 		<flink.shaded.jackson.version>2.14.2</flink.shaded.jackson.version>
 		<flink.markBundledAsOptional>true</flink.markBundledAsOptional>
-		<target.java.version>1.8</target.java.version>
+		<target.java.version>11</target.java.version>
 		<slf4j.version>1.7.36</slf4j.version>
 		<log4j.version>2.17.1</log4j.version>
 		<!-- Overwrite default values from parent pom.
@@ -1456,7 +1456,7 @@ under the License.
 				</property>
 			</activation>
 			<properties>
-				<target.java.version>1.8</target.java.version>
+				<target.java.version>11</target.java.version>
 			</properties>
 			<build>
 				<plugins>
@@ -1488,7 +1488,7 @@ under the License.
 										<!-- versions for certain build tools are enforced to match the CI setup -->
 										<!-- the rules below should stay in sync with Flink Release wiki documentation and the CI scripts -->
 										<requireJavaVersion>
-											<version>[1.8.0,1.8.1)</version>
+											<version>[1.8.0,11.0.21)</version>
 										</requireJavaVersion>
 									</rules>
 								</configuration>
@@ -1888,7 +1888,7 @@ under the License.
 						<configuration>
 							<rules>
 								<requireMavenVersion>
-									<version>[3.8.6]</version>
+									<version>[3.8.6,3.9.9]</version>
 								</requireMavenVersion>
 								<requireJavaVersion>
 									<version>${target.java.version}</version>
@@ -2325,7 +2325,7 @@ under the License.
 					<configuration>
 						<args>
 							<arg>-nobootcp</arg>
-							<arg>-target:jvm-${target.java.version}</arg>
+							<arg>-target:jvm-1.8</arg>
 						</args>
 						<jvmArgs>
 							<arg>-Xss2m</arg>
