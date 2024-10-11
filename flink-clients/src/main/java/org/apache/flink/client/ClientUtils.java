@@ -82,15 +82,19 @@ public enum ClientUtils {
             boolean suppressSysout)
             throws ProgramInvocationException {
         checkNotNull(executorServiceLoader);
+        // 这一步会进行类加载器的替换, 将当前线程所用的类加载器替换为ChildFirstClassLoader或者ParentFirstClassLoader, 所以运行用户代码的类加载器实际是ChildFirstClassLoader(默认)或者ParentFirstClassLoader
         final ClassLoader userCodeClassLoader = program.getUserCodeClassLoader();
+        // 保存当前线程之前的类加载器，执行完用户代码后切换回去
         final ClassLoader contextClassLoader = Thread.currentThread().getContextClassLoader();
         try {
+            // 将当前线程所用的类加载器替换为ChildFirstClassLoader或者ParentFirstClassLoader
             Thread.currentThread().setContextClassLoader(userCodeClassLoader);
 
             LOG.info(
                     "Starting program (detached: {})",
                     !configuration.get(DeploymentOptions.ATTACHED));
 
+            // 设置ContextEnvironmentFactory
             ContextEnvironment.setAsContext(
                     executorServiceLoader,
                     configuration,
@@ -98,6 +102,7 @@ public enum ClientUtils {
                     enforceSingleJobExecution,
                     suppressSysout);
 
+            // 封装StreamContextEnvironment, 设置StreamExecutionEnvironmentFactory, 所以用户代码执行StreamExecutionEnvironment.getExecutionEnvironment()获取到封装的StreamContextEnvironment
             StreamContextEnvironment.setAsContext(
                     executorServiceLoader,
                     configuration,
@@ -110,6 +115,12 @@ public enum ClientUtils {
                     executorServiceLoader, configuration, userCodeClassLoader);
 
             try {
+                /**
+                 * TODO: 执行用户代码, 用户主类的main方法。就是通过反射调用主类的main方法：
+                 *  Method mainMethod = entryClass.getMethod("main", String[].class);
+                 *  mainMethod.invoke(null, (Object) args);
+                 * 最终在StreamExecutionEnvironment#execute方法处向集群提交应用
+                 */
                 program.invokeInteractiveModeForExecution();
             } finally {
                 ContextEnvironment.unsetAsContext();
@@ -118,6 +129,7 @@ public enum ClientUtils {
                 ExecutionContextEnvironment.unsetAsContext();
             }
         } finally {
+            // 类加载器再切换回之前的
             Thread.currentThread().setContextClassLoader(contextClassLoader);
         }
     }

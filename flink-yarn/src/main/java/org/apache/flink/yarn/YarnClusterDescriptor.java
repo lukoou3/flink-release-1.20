@@ -557,10 +557,11 @@ public class YarnClusterDescriptor implements ClusterDescriptor<ApplicationId> {
         LOG.warn(
                 "Job Clusters are deprecated since Flink 1.15. Please use an Application Cluster/Application Mode instead.");
         try {
+            // 部署per-job应用
             return deployInternal(
                     clusterSpecification,
                     "Flink per-job cluster",
-                    getYarnJobClusterEntrypoint(),
+                    getYarnJobClusterEntrypoint(), // 主类是YarnJobClusterEntrypoint
                     jobGraph,
                     detached);
         } catch (Exception e) {
@@ -689,11 +690,12 @@ public class YarnClusterDescriptor implements ClusterDescriptor<ApplicationId> {
         flinkConfiguration.set(
                 ClusterEntrypoint.INTERNAL_CLUSTER_EXECUTION_MODE, executionMode.toString());
 
+        // 启动AppMaster
         ApplicationReport report =
                 startAppMaster(
                         flinkConfiguration,
                         applicationName,
-                        yarnClusterEntrypoint,
+                        yarnClusterEntrypoint, // YarnJobClusterEntrypoint
                         jobGraph,
                         yarnClient,
                         yarnApplication,
@@ -1202,6 +1204,7 @@ public class YarnClusterDescriptor implements ClusterDescriptor<ApplicationId> {
         final JobManagerProcessSpec processSpec =
                 JobManagerProcessUtils.processSpecFromConfigWithNewOptionToInterpretLegacyHeap(
                         flinkConfiguration, JobManagerOptions.TOTAL_PROCESS_MEMORY);
+        // 启动ApplicationMasterContainer, 构建Application Master start command, java进程主类是YarnJobClusterEntrypoint
         final ContainerLaunchContext amContainer =
                 setupApplicationMasterContainer(yarnClusterEntrypoint, hasKrb5, processSpec);
 
@@ -1279,6 +1282,7 @@ public class YarnClusterDescriptor implements ClusterDescriptor<ApplicationId> {
                 new DeploymentFailureHook(yarnApplication, fileUploader.getApplicationDir());
         Runtime.getRuntime().addShutdownHook(deploymentFailureHook);
         LOG.info("Submitting application master " + appId);
+        // 提交应用
         yarnClient.submitApplication(appContext);
 
         LOG.info("Waiting for the cluster to be allocated");
@@ -1894,6 +1898,7 @@ public class YarnClusterDescriptor implements ClusterDescriptor<ApplicationId> {
                 flinkConfiguration.get(YARN_CONTAINER_START_COMMAND_TEMPLATE);
         final String amCommand = getStartCommand(commandTemplate, startCommandValues);
 
+        // am运行的命令, java进程主类是YarnJobClusterEntrypoint
         amContainer.setCommands(Collections.singletonList(amCommand));
 
         LOG.debug("Application Master start command: " + amCommand);

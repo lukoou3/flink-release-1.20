@@ -394,6 +394,7 @@ public final class Utils {
         boolean hasLogback = new File(workingDirectory, "logback.xml").exists();
         boolean hasLog4j = new File(workingDirectory, "log4j.properties").exists();
 
+        // TaskExecutor启动运行的命令, java进程的主类YarnTaskExecutorRunner
         String launchCommand =
                 getTaskManagerShellCommand(
                         flinkConfig,

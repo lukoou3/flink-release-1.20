@@ -62,6 +62,7 @@ public class ExecutionConfigAccessor {
         final Configuration configuration = new Configuration();
 
         options.applyToConfiguration(configuration);
+        // 这里会把用户提交的jar(包括lib目录下的jar)列表设置到pipeline.jars
         ConfigUtils.encodeCollectionToConfig(
                 configuration, PipelineOptions.JARS, jobJars, Object::toString);
 

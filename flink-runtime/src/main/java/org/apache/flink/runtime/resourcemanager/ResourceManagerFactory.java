@@ -41,6 +41,9 @@ import java.util.UUID;
 import java.util.concurrent.Executor;
 
 /**
+ * 创建ResourceManager的factory
+ *   yarn的是YarnResourceManagerFactory => YarnResourceManagerDriver
+ *   申请到Container后启动TaskExecutor, TaskExecutor的主类YarnTaskExecutorRunner
  * {@link ResourceManager} factory.
  *
  * @param <T> type of the workers of the ResourceManager

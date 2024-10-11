@@ -435,6 +435,7 @@ public class YarnResourceManagerDriver extends AbstractResourceManagerDriver<Yar
             }
 
             requestResourceFuture.complete(new YarnWorkerNode(container, resourceId));
+            // 申请到Container后启动TaskExecutor
             startTaskExecutorInContainerAsync(container, taskExecutorProcessSpec, resourceId);
             removeContainerRequest(pendingRequest);
 
@@ -551,7 +552,7 @@ public class YarnResourceManagerDriver extends AbstractResourceManagerDriver<Yar
                 BootstrapTools.getDynamicPropertiesAsString(flinkClientConfig, taskManagerConfig);
 
         log.debug("TaskManager configuration: {}", taskManagerConfig);
-
+        // TaskExecutor启动Context
         final ContainerLaunchContext taskExecutorLaunchContext =
                 Utils.createTaskExecutorContext(
                         flinkConfig,
@@ -686,6 +687,7 @@ public class YarnResourceManagerDriver extends AbstractResourceManagerDriver<Yar
 
                         for (Map.Entry<Priority, List<Container>> entry :
                                 groupContainerByPriority(containers).entrySet()) {
+                            // 申请到Container后启动TaskExecutor
                             onContainersOfPriorityAllocated(entry.getKey(), entry.getValue());
                         }
 

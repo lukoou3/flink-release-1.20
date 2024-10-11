@@ -186,6 +186,7 @@ public class ProgramOptions extends CommandLineOptions {
 
         configuration.set(DeploymentOptions.ATTACHED, !getDetachedMode());
         configuration.set(DeploymentOptions.SHUTDOWN_IF_ATTACHED, isShutdownOnAttachedExit());
+        // 这里会把classpath(C)参数添加的jar url列表设置到pipeline.classpaths
         ConfigUtils.encodeCollectionToConfig(
                 configuration, PipelineOptions.CLASSPATHS, getClasspaths(), URL::toString);
         SavepointRestoreSettings.toConfiguration(getSavepointRestoreSettings(), configuration);

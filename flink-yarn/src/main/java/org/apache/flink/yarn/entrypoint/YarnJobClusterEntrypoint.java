@@ -70,6 +70,9 @@ public class YarnJobClusterEntrypoint extends JobClusterEntrypoint {
     //  for a single Flink job.
     // ------------------------------------------------------------------------
 
+    /**
+     * per-job模式Yarn Application Master进程的主类入口
+     */
     public static void main(String[] args) {
 
         LOG.warn(

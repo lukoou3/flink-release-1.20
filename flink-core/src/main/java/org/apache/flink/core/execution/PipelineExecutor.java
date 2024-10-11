@@ -29,10 +29,12 @@ import java.util.concurrent.CompletableFuture;
 public interface PipelineExecutor {
 
     /**
+     * 根据提供的配置执行Pipeline，并返回一个JobClient，该JobClient允许与正在执行的作业进行交互，例如取消它或获取保存点。
      * Executes a {@link Pipeline} based on the provided configuration and returns a {@link
      * JobClient} which allows to interact with the job being executed, e.g. cancel it or take a
      * savepoint.
      *
+     * 注意：调用者负责管理返回的JobClient的生命周期。这意味着例如close（）应该在调用站点显式调用。
      * <p><b>ATTENTION:</b> The caller is responsible for managing the lifecycle of the returned
      * {@link JobClient}. This means that e.g. {@code close()} should be called explicitly at the
      * call-site.

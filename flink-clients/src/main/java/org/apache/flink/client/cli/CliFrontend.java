@@ -222,28 +222,48 @@ public class CliFrontend {
     protected void run(String[] args) throws Exception {
         LOG.info("Running 'run' command.");
 
+        // 将默认的Option、Flink识别的Option、savepoint Option保存到Options中
         final Options commandOptions = CliFrontendParser.getRunCommandOptions();
+        // 将用户的输入参数args与Options进行匹配, 匹配后生成CommandLine
         final CommandLine commandLine = getCommandLine(commandOptions, args, true);
 
+        // 如果输入参数中有help(h)的话, 则打印出help信息
         // evaluate help flag
         if (commandLine.hasOption(HELP_OPTION.getOpt())) {
             CliFrontendParser.printHelpForRun(customCommandLines);
             return;
         }
 
+        // 以用户启动参数作为判断依据, 挨个判断GenericCLI、FlinkYarnSessionCli、DefaultCLI哪个为Active
         final CustomCommandLine activeCommandLine =
                 validateAndGetActiveCommandLine(checkNotNull(commandLine));
 
+        // 对输入参数再进行解析, 封装为ProgramOptions
         final ProgramOptions programOptions = ProgramOptions.create(commandLine);
 
+        // 获取用户提交的jar包以及依赖jar的URL, 都封装到这个List中。包括用户提交的jar和jar文件里lib目录下的jar文件
+        // TODO: 所以用户可以把多个jar打包到主jar的lib目录实现多jar提交
         final List<URL> jobJars = getJobJarAndDependencies(programOptions);
 
+        /**
+         * 生成生效的配置：从Flink conf, custom commandline, and program options各个配置中生成, 依次覆盖
+         *   这里会把classpath(C)参数添加的jar url列表设置到pipeline.classpaths
+         *   这里会把用户提交的jar(包括lib目录下的jar)列表设置到pipeline.jars
+         *   pipeline.jars和pipeline.classpaths参数中包含的jar列表都会提交到集群，并且在集群测通过FlinkUserCodeClassLoader类加载器加载
+         *   yarn-per-job和yarn-session模式，我们可以通过向pipeline.jars列表增加jar url的方式动态加载其它的jar
+         */
         final Configuration effectiveConfiguration =
                 getEffectiveConfiguration(activeCommandLine, commandLine, programOptions, jobJars);
 
         LOG.debug("Effective executor configuration: {}", effectiveConfiguration);
 
+        // build Program, 生成的PackagedProgram是最终要提交到集群的配置, 封装了应用的配置信息：jarFile, mainClass, configuration, userCodeClassLoader等
+        // TODO: PackagedProgram类, client提交的核心实现
         try (PackagedProgram program = getPackagedProgram(programOptions, effectiveConfiguration)) {
+            /**
+             *  executeProgram 核心实现
+             * 调用 {@link ClientUtils#executeProgram} 方法
+             */
             executeProgram(effectiveConfiguration, program);
         }
     }
@@ -1250,6 +1270,7 @@ public class CliFrontend {
      */
     public int parseAndRun(String[] args) {
 
+        // 校验至少有一个action参数, 如果只执行"bin/flink", 后面不加任何参数的话, 将会打印help内容
         // check for action
         if (args.length < 1) {
             CliFrontendParser.printHelp(customCommandLines);
@@ -1257,19 +1278,24 @@ public class CliFrontend {
             return 1;
         }
 
+        // 获取action参数, 大部分情况是run
         // get action
         String action = args[0];
 
+        // 获取排除action后的参数
         // remove action from parameters
         final String[] params = Arrays.copyOfRange(args, 1, args.length);
 
         try {
+            // 执行对应action的逻辑, run, run-application, list, stop, savepoint等action
             // do action
             switch (action) {
                 case ACTION_RUN:
+                    // TODO: flink run命令执行逻辑, 最常用的命令
                     run(params);
                     return 0;
                 case ACTION_RUN_APPLICATION:
+                    // run-application命令执行逻辑
                     runApplication(params);
                     return 0;
                 case ACTION_LIST:
@@ -1342,21 +1368,26 @@ public class CliFrontend {
 
     @VisibleForTesting
     static int mainInternal(final String[] args) {
+        // 主要就是获取JVM信息、hadoop信息等打印日志
         EnvironmentInformation.logEnvironmentInfo(LOG, "Command Line Client", args);
 
+        // 1. 获取Flink的conf目录所在路径。首先从FLINK_CONF_DIR环境变量获取(idea环境), 然后从../conf目录下获取(生产环境)。
         // 1. find the configuration directory
         final String configurationDirectory = getConfigurationDirectoryFromEnv();
 
+        // 2. 根据conf路径, 加载flink-conf.yaml, 解析其中配置保存到Configuration中, Configuration实际就是HashMap
         // 2. load the global configuration
         final Configuration configuration =
                 GlobalConfiguration.loadConfiguration(configurationDirectory);
 
+        // 3. 按照GenericCLI、FlinkYarnSessionCli、DefaultCLI顺序封装命令行接口, 并且保存到List中
         // 3. load the custom command lines
         final List<CustomCommandLine> customCommandLines =
                 loadCustomCommandLines(configuration, configurationDirectory);
 
         int retCode = INITIAL_RET_CODE;
         try {
+            // 创建CliFrontend对象(封装了configuration和customCommandLines)
             final CliFrontend cli = new CliFrontend(configuration, customCommandLines);
             CommandLine commandLine =
                     cli.getCommandLine(
@@ -1366,6 +1397,7 @@ public class CliFrontend {
             Configuration securityConfig = new Configuration(cli.configuration);
             DynamicPropertiesUtil.encodeDynamicProperties(commandLine, securityConfig);
             SecurityUtils.install(new SecurityConfiguration(securityConfig));
+            // TODO: 执行parseAndRun，在这里面会通过反射执行用户jar包中的main方法。核心方法。
             retCode = SecurityUtils.getInstalledContext().runSecured(() -> cli.parseAndRun(args));
         } catch (Throwable t) {
             final Throwable strippedThrowable =

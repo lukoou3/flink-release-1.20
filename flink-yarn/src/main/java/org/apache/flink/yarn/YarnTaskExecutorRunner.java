@@ -56,6 +56,7 @@ public class YarnTaskExecutorRunner {
     // ------------------------------------------------------------------------
 
     /**
+     * yarn应用, Task Manager(task executor)运行的主类入口
      * The entry point for the YARN task executor runner.
      *
      * @param args The command line arguments.

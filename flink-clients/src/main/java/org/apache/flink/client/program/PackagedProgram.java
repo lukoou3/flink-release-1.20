@@ -142,6 +142,7 @@ public class PackagedProgram implements AutoCloseable {
                 this.jarFile == null
                         ? Collections.emptyList()
                         : extractContainedLibraries(this.jarFile);
+        // 创建用户类加载器。ChildFirstClassLoader或者ChildFirstClassLoader
         this.userCodeClassLoader =
                 ClientUtils.buildUserCodeClassLoader(
                         getJobJarAndDependencies(),
@@ -277,10 +278,11 @@ public class PackagedProgram implements AutoCloseable {
                         : extractContainedLibraries(jarFileUrl);
 
         List<URL> libs = new ArrayList<URL>(extractedTempLibraries.size() + 1);
-
+        // 当前jar文件
         if (jarFileUrl != null) {
             libs.add(jarFileUrl);
         }
+        // jar文件里lib目录下的jar文件
         for (File tmpLib : extractedTempLibraries) {
             try {
                 libs.add(tmpLib.getAbsoluteFile().toURI().toURL());

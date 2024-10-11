@@ -2466,6 +2466,10 @@ public class StreamExecutionEnvironment implements AutoCloseable {
     @Internal
     public JobClient executeAsync(StreamGraph streamGraph) throws Exception {
         checkNotNull(streamGraph, "StreamGraph cannot be null.");
+        /**
+         *  yarn-per-job模式是YarnJobClusterExecutor(extend AbstractJobClusterExecutor)
+         *  local模式是LocalExecutor
+         */
         final PipelineExecutor executor = getPipelineExecutor();
 
         CompletableFuture<JobClient> jobClientFuture =
@@ -2991,6 +2995,11 @@ public class StreamExecutionEnvironment implements AutoCloseable {
                 configuration.get(DeploymentOptions.TARGET),
                 "No execution.target specified in your configuration file.");
 
+        /**
+         * 获取与指定模式兼容PipelineExecutorFactory
+         *  yarn-per-job模式是YarnJobClusterExecutorFactory
+         *  local模式是LocalExecutorFactory
+         */
         final PipelineExecutorFactory executorFactory =
                 executorServiceLoader.getExecutorFactory(configuration);
 
@@ -2999,6 +3008,7 @@ public class StreamExecutionEnvironment implements AutoCloseable {
                 "Cannot find compatible factory for specified execution.target (=%s)",
                 configuration.get(DeploymentOptions.TARGET));
 
+        // 从PipelineExecutorFactory获取PipelineExecutor
         return executorFactory.getExecutor(configuration);
     }
 }
