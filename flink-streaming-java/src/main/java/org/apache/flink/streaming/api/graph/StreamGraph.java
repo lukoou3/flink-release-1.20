@@ -641,6 +641,7 @@ public class StreamGraph implements Pipeline {
                     exchangeMode,
                     intermediateDataSetId);
         } else if (virtualPartitionNodes.containsKey(upStreamVertexID)) {
+            // 如果上个节点是虚拟分区节点, 则把上个节点替换为虚拟分区节点的上个节点
             int virtualId = upStreamVertexID;
             upStreamVertexID = virtualPartitionNodes.get(virtualId).f0;
             if (partitioner == null) {
@@ -723,6 +724,7 @@ public class StreamGraph implements Pipeline {
          */
         int uniqueId = getStreamEdges(upstreamNode.getId(), downstreamNode.getId()).size();
 
+        // 创建边StreamEdge
         StreamEdge edge =
                 new StreamEdge(
                         upstreamNode,
@@ -734,6 +736,10 @@ public class StreamGraph implements Pipeline {
                         uniqueId,
                         intermediateDataSetId);
 
+        /**
+         * 把edge添加到upstreamNode的出边outEdges
+         * 把edge添加到downstreamNode的入边inEdges
+         */
         getStreamNode(edge.getSourceId()).addOutEdge(edge);
         getStreamNode(edge.getTargetId()).addInEdge(edge);
     }

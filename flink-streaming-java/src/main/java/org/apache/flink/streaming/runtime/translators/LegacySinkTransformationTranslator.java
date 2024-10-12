@@ -79,6 +79,11 @@ public class LegacySinkTransformationTranslator<IN>
                         + parentTransformations.size());
         final Transformation<?> input = parentTransformations.get(0);
 
+        /**
+         * streamNode放入streamNodes, vertexID加入streamGraph的sinks
+         * 和OneInputTransformationTranslator一样也是调用的addOperator方法
+         * sink和其它的节点一样下面需要调用addEdge的操作
+         */
         streamGraph.addSink(
                 transformationId,
                 slotSharingGroup,
@@ -99,6 +104,10 @@ public class LegacySinkTransformationTranslator<IN>
         streamGraph.setSupportsConcurrentExecutionAttempts(
                 transformationId, transformation.isSupportsConcurrentExecutionAttempts());
 
+        /**
+         * 添加Edge, 连接相邻的Operator/streamNode
+         * 每个StreamNode都有inEdges, outEdges, source类型的StreamNode的inEdges为null, sink类型的StreamNode的outEdges为null
+         */
         for (Integer inputId : context.getStreamNodeIds(input)) {
             streamGraph.addEdge(inputId, transformationId, 0);
         }

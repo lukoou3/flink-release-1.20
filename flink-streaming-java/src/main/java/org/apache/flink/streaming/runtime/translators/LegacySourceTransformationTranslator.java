@@ -60,9 +60,15 @@ public class LegacySourceTransformationTranslator<OUT>
 
         final StreamGraph streamGraph = context.getStreamGraph();
         final String slotSharingGroup = context.getSlotSharingGroup();
+        // transformationId是自动生成的, 自增
         final int transformationId = transformation.getId();
         final ExecutionConfig executionConfig = streamGraph.getExecutionConfig();
 
+        /**
+         * streamNode放入streamNodes, vertexID加入streamGraph的sources
+         * 和OneInputTransformationTranslator一样也是调用的addOperator方法
+         * Source和其它的节点不一样的是不需要调用addEdge的操作, source是首个节点不需要添加边, 转换其它的节点时添加inputNode->thisNode边即可
+         */
         streamGraph.addLegacySource(
                 transformationId,
                 slotSharingGroup,

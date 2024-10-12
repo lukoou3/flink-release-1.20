@@ -290,6 +290,10 @@ public class DataStream<T> {
      */
     public <K> KeyedStream<T, K> keyBy(KeySelector<T, K> key) {
         Preconditions.checkNotNull(key);
+        /**
+         * keyBy方法直接创建KeyedStream(extends DataStream)对象, 内部会创建PartitionTransformation，然后继承DataStream(environment, partitionTransformation)
+         * 这里没有把partitionTransformation加入transformations列表，PartitionTransformation只有input和partitioner信息不包含对元素的处理
+         */
         return new KeyedStream<>(this, clean(key));
     }
 
@@ -626,10 +630,12 @@ public class DataStream<T> {
      */
     public <R> SingleOutputStreamOperator<R> flatMap(FlatMapFunction<T, R> flatMapper) {
 
+        // 如果实现了ResultTypeQueryable接口, 直接返回getProducedType()；否则使用TypeExtractor从泛型参数中提取类型
         TypeInformation<R> outType =
                 TypeExtractor.getFlatMapReturnTypes(
                         clean(flatMapper), getType(), Utils.getCallLocationName(), true);
 
+        // 我们也可以直接传入输出类型的TypeInformation不需要flink推断, sql实现中往往如此
         return flatMap(flatMapper, outType);
     }
 
@@ -647,6 +653,12 @@ public class DataStream<T> {
      */
     public <R> SingleOutputStreamOperator<R> flatMap(
             FlatMapFunction<T, R> flatMapper, TypeInformation<R> outputType) {
+        /**
+         * map,flatMap,filter等方法都是调用的这个transform方法, 只是封装传入的operator(OneInputStreamOperator)不同
+         *   map => StreamMap
+         *   flatMap => StreamFlatMap
+         *   filter => StreamFilter
+         */
         return transform("Flat Map", outputType, new StreamFlatMap<>(clean(flatMapper)));
     }
 
@@ -1179,7 +1191,7 @@ public class DataStream<T> {
             String operatorName,
             TypeInformation<R> outTypeInfo,
             OneInputStreamOperator<T, R> operator) {
-
+        // StreamOperator => OperatorFactory, 之后从operatorFactory获取operator
         return doTransform(operatorName, outTypeInfo, SimpleOperatorFactory.of(operator));
     }
 
@@ -1209,10 +1221,16 @@ public class DataStream<T> {
             String operatorName,
             TypeInformation<R> outTypeInfo,
             StreamOperatorFactory<R> operatorFactory) {
-
+        // 确保配置有输出类型
         // read the output type of the input Transform to coax out errors about MissingTypeInfo
         transformation.getOutputType();
 
+        /**
+         * 构造OneInputTransformation, input就是这个DataStream的transformation，operatorFactory保存Transformation的处理信息
+         * 再通过OneInputTransformation构造SingleOutputStreamOperator
+         *   Transformation的input属性就类似RDD的dependencies或者prev，保存输入DataStream的Transformation信息
+         *   Transformation的operatorFactory类似RDD的compute方法，负责当前DataStream具体的处理数量
+         */
         OneInputTransformation<T, R> resultTransform =
                 new OneInputTransformation<>(
                         this.transformation,
@@ -1226,6 +1244,10 @@ public class DataStream<T> {
         SingleOutputStreamOperator<R> returnStream =
                 new SingleOutputStreamOperator(environment, resultTransform);
 
+        /**
+         * 把生成的Transformation添加到environment的transformations列表中
+         * 除了source生成的Transformation都会添加到transformations列表中
+         */
         getExecutionEnvironment().addOperator(resultTransform);
 
         return returnStream;
@@ -1255,11 +1277,22 @@ public class DataStream<T> {
         // read the output type of the input Transform to coax out errors about MissingTypeInfo
         transformation.getOutputType();
 
+        /**
+         * 如果sinkFunction实现了InputTypeConfigurable接口，调用setInputType方法
+         * 在开启对象重用时需要根据TypeInformation创建TypeSerializer复制元素时会有用
+         */
         // configure the type if needed
         if (sinkFunction instanceof InputTypeConfigurable) {
             ((InputTypeConfigurable) sinkFunction).setInputType(getType(), getExecutionConfig());
         }
 
+        /**
+         * 生成的Transformation是LegacySinkTransformation，会把transformation添加到transformations列表
+         * 创建返回DataStreamSink
+         *   DataStreamSink没有继承DataStream，属性仅仅包含LegacySinkTransformation
+         *   DataStreamSink的方法只有name,uid,setParallelism,disableChaining等对其transformation进行属性设置
+         *   DataStreamSink属于最终的节点, 不能在其之上再生成新的DataStream
+         */
         return DataStreamSink.forSinkFunction(this, clean(sinkFunction));
     }
 

@@ -24,6 +24,7 @@ import org.apache.flink.annotation.PublicEvolving;
 import org.apache.flink.api.common.ExecutionConfig;
 import org.apache.flink.api.common.InvalidProgramException;
 import org.apache.flink.api.common.JobExecutionResult;
+import org.apache.flink.api.common.JobID;
 import org.apache.flink.api.common.RuntimeExecutionMode;
 import org.apache.flink.api.common.cache.DistributedCache;
 import org.apache.flink.api.common.eventtime.WatermarkStrategy;
@@ -99,6 +100,7 @@ import org.apache.flink.streaming.api.functions.source.StatefulSequenceSource;
 import org.apache.flink.streaming.api.functions.source.TimestampedFileInputSplit;
 import org.apache.flink.streaming.api.graph.StreamGraph;
 import org.apache.flink.streaming.api.graph.StreamGraphGenerator;
+import org.apache.flink.streaming.api.graph.StreamingJobGraphGenerator;
 import org.apache.flink.streaming.api.operators.StreamSource;
 import org.apache.flink.streaming.api.operators.collect.CollectResultIterator;
 import org.apache.flink.streaming.api.transformations.CacheTransformation;
@@ -2215,6 +2217,7 @@ public class StreamExecutionEnvironment implements AutoCloseable {
         checkNotNull(sourceName);
         checkNotNull(boundedness);
 
+        // 如果实现了ResultTypeQueryable接口, 直接返回getProducedType()；否则使用TypeExtractor从泛型参数中提取类型
         TypeInformation<OUT> resolvedTypeInfo =
                 getTypeInfo(function, sourceName, SourceFunction.class, typeInfo);
 
@@ -2223,6 +2226,11 @@ public class StreamExecutionEnvironment implements AutoCloseable {
         clean(function);
 
         final StreamSource<OUT, ?> sourceOperator = new StreamSource<>(function);
+        /**
+         * 返回DataStreamSource(extends SingleOutputStreamOperator)对象, 这是生成DataStream的开始，之后调用DataStream的map filter等方法都是返回DataStream对象
+         * addSource方法不涉及把Transformation添加到transformations中
+         * 封装StreamSource生成的LegacySourceTransformation属于Transformation，其作为起始Transformation，不用添加到transformations中
+         */
         return new DataStreamSource<>(
                 this, resolvedTypeInfo, sourceOperator, isParallel, sourceName, boundedness);
     }
@@ -2316,12 +2324,23 @@ public class StreamExecutionEnvironment implements AutoCloseable {
      */
     public JobExecutionResult execute(String jobName) throws Exception {
         final List<Transformation<?>> originalTransformations = new ArrayList<>(transformations);
+        /**
+         * transformations => streamGraph
+         *   transformations传入 StreamGraphGenerator构造函数
+         *   调用StreamGraphGenerator的generate()方法生成StreamGraph: {@link StreamGraphGenerator#generate()}
+         */
         StreamGraph streamGraph = getStreamGraph();
         if (jobName != null) {
             streamGraph.setJobName(jobName);
         }
 
         try {
+            /**
+             * streamGraph => jobGraph:
+             *   就是直接调用StreamGraph的getJobGraph方法, {@link StreamGraph#getJobGraph(ClassLoader, JobID)}
+             *   StreamGraph直接调用StreamingJobGraphGenerator的createJobGraph方法, {@link StreamingJobGraphGenerator#createJobGraph()}
+             * 提交jobGraph
+             */
             return execute(streamGraph);
         } catch (Throwable t) {
             Optional<ClusterDatasetCorruptedException> clusterDatasetCorruptedException =
@@ -2677,6 +2696,15 @@ public class StreamExecutionEnvironment implements AutoCloseable {
      * @return The execution environment of the context in which the program is executed.
      */
     public static StreamExecutionEnvironment getExecutionEnvironment(Configuration configuration) {
+        /**
+         * 命令行提交时，返回提交命令后，设置的factory，StreamContextEnvironment.setAsContext
+         *   new StreamContextEnvironment, 携带集群配置命令行参数配置、userCodeClassLoader，配置合并传入的configuration
+         *   返回 StreamContextEnvironment
+         * 直接在idea运行，factory没设置，就直接返回StreamExecutionEnvironment.createLocalEnvironment(configuration)
+         *   返回 LocalStreamEnvironment
+         * StreamContextEnvironment和LocalStreamEnvironment都继承StreamExecutionEnvironment, 核心实现在StreamExecutionEnvironment类中
+         * 实现逻辑只看StreamExecutionEnvironment类就行
+         */
         return Utils.resolveFactory(threadLocalContextEnvironmentFactory, contextEnvironmentFactory)
                 .map(factory -> factory.createExecutionEnvironment(configuration))
                 .orElseGet(() -> StreamExecutionEnvironment.createLocalEnvironment(configuration));
@@ -2920,6 +2948,9 @@ public class StreamExecutionEnvironment implements AutoCloseable {
             String sourceName,
             Class<?> baseSourceClass,
             TypeInformation<OUT> typeInfo) {
+        /**
+         * 如果实现了ResultTypeQueryable接口, 直接返回getProducedType()；否则使用TypeExtractor从泛型参数中提取类型
+         */
         TypeInformation<OUT> resolvedTypeInfo = typeInfo;
         if (resolvedTypeInfo == null && source instanceof ResultTypeQueryable) {
             resolvedTypeInfo = ((ResultTypeQueryable<OUT>) source).getProducedType();

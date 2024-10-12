@@ -270,15 +270,19 @@ public class StreamGraphGenerator {
     }
 
     public StreamGraph generate() {
+        // new StreamGraph对象，传入配置参数
         streamGraph =
                 new StreamGraph(
                         configuration, executionConfig, checkpointConfig, savepointRestoreSettings);
         shouldExecuteInBatchMode = shouldExecuteInBatchMode();
+        // streamGraph的设置, chaining, timeCharacteristic, stateBackend等配置
         configureStreamGraph(streamGraph);
 
         alreadyTransformed = new IdentityHashMap<>();
 
+        // 逐个处理transformation
         for (Transformation<?> transformation : transformations) {
+            // TODO: 主要逻辑
             transform(transformation);
         }
 
@@ -474,12 +478,30 @@ public class StreamGraphGenerator {
     }
 
     /**
+     * 转换Transformation:
+     *   会先转换input, SourceTransformation没有input不用转换input
+     *   转换前先检查该transformation是否已被处理过，如果已处理直接返回处理过的结果
+     *   调用对应TransformationTranslator的translateForStreaming方法完成转换：
+     *     LegacySourceTransformation:
+     *       生成streamNode放入streamNodes, vertexID加入streamGraph的sources
+     *       source和其它的节点不一样的是不需要调用addEdge的操作, source是首个节点不需要添加边, 转换其它的节点时添加inputNode->thisNode边即可
+     *     OneInputTransformation:
+     *       生成streamNode放入streamNodes
+     *       添加Edge, 连接相邻的Operator/streamNode, 每个StreamNode都有inEdges, outEdges, source类型的StreamNode的inEdges为null, sink类型的StreamNode的outEdges为null
+     *       添加Edge时，如果上个节点是虚拟分区节点, 则把上个节点替换为虚拟分区节点的上个节点
+     *     PartitionTransformation:
+     *       添加虚拟的partitionNode，就只是把连接关系保存到virtualPartitionNodes(Map)中
+     *     LegacySinkTransformation:
+     *       生成streamNode放入streamNodes, vertexID加入streamGraph的sinks
+     *       添加Edge, 连接相邻的Operator/streamNode
+     *
      * Transforms one {@code Transformation}.
      *
      * <p>This checks whether we already transformed it and exits early in that case. If not it
      * delegates to one of the transformation specific methods.
      */
     private Collection<Integer> transform(Transformation<?> transform) {
+        // 检查该transformation是否已被处理过，如果已处理直接返回处理过的结果
         if (alreadyTransformed.containsKey(transform)) {
             return alreadyTransformed.get(transform);
         }
@@ -523,9 +545,21 @@ public class StreamGraphGenerator {
                             }
                         });
 
+        // 这里又检查了transformation的输出类型
         // call at least once to trigger exceptions about MissingTypeInfo
         transform.getOutputType();
 
+        /**
+         *  转换transform的主要函数存在translatorMap中, 看translatorMap的内容即可, 之前的版本直接是在代码中if判断调用不同的处理函数
+         *  主要的TransformationTranslator, 逻辑在其translateForStreamingInternal方法中:
+         *      OneInputTransformation.class => OneInputTransformationTranslator实现逻辑实际在AbstractOneInputTransformationTranslator类translateInternal方法中
+         *      PartitionTransformation.class => PartitionTransformationTranslator
+         *      ReduceTransformation.class => ReduceTransformationTranslator
+         *      LegacySourceTransformation.class => LegacySourceTransformationTranslator
+         *      LegacySinkTransformation.class => LegacySinkTransformationTranslator
+         *      SourceTransformation.class => SourceTransformationTranslator
+         *      SinkTransformation.class => SinkTransformationTranslator
+         */
         @SuppressWarnings("unchecked")
         final TransformationTranslator<?, Transformation<?>> translator =
                 (TransformationTranslator<?, Transformation<?>>)
@@ -533,11 +567,26 @@ public class StreamGraphGenerator {
 
         Collection<Integer> transformedIds;
         if (translator != null) {
+            /**
+             * 调用translator.translateForStreaming(transform, context)方法
+             *  {@link TransformationTranslator#translateForStreaming}
+             *  {@link SimpleTransformationTranslator#translateForStreaming}
+             *  {@link LegacySourceTransformationTranslator#translateForStreamingInternal}
+             *  {@link OneInputTransformationTranslator#translateForStreamingInternal}
+             *  {@link PartitionTransformationTranslator#translateForStreamingInternal}
+             *  {@link ReduceTransformationTranslator#translateForStreamingInternal}
+             *  {@link LegacySinkTransformationTranslator#translateForStreamingInternal}
+             */
             transformedIds = translate(translator, transform);
         } else {
             transformedIds = legacyTransform(transform);
         }
 
+        /**
+         * 如果该transformation没有被处理，则加入已处理列表
+         * 处理每个transformation的时候会先处理它的input（可能没有input，也可能有一个或多个），transform方法会递归调用。
+         * 在transform方法执行前后双重检查transformation是否已被处理可以确保在递归调用的情况下不会被重复处理
+         */
         // need this check because the iterate transformation adds itself before
         // transforming the feedback edges
         if (!alreadyTransformed.containsKey(transform)) {
@@ -790,6 +839,7 @@ public class StreamGraphGenerator {
         checkNotNull(translator);
         checkNotNull(transform);
 
+        // 先transform其input
         final List<Collection<Integer>> allInputIds = getParentInputIds(transform.getInputs());
 
         // the recursive call might have already transformed this

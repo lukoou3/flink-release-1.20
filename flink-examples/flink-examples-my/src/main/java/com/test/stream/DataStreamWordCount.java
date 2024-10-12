@@ -2,9 +2,11 @@ package com.test.stream;
 
 import org.apache.flink.api.common.functions.RichFlatMapFunction;
 import org.apache.flink.api.java.tuple.Tuple2;
+import org.apache.flink.configuration.Configuration;
 import org.apache.flink.streaming.api.datastream.DataStreamSource;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
+import org.apache.flink.streaming.api.functions.sink.PrintSinkFunction;
 import org.apache.flink.util.Collector;
 
 /**
@@ -13,7 +15,9 @@ import org.apache.flink.util.Collector;
 public class DataStreamWordCount {
 
     public static void main(String[] args) throws Exception {
-        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment();
+        Configuration configuration = new Configuration();
+        configuration.setString("heartbeat.timeout", "300000");
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment(configuration);
         env.setParallelism(1);
 
         DataStreamSource<String> textDs = env.addSource(new CustomSourceFunction<String>() {
@@ -36,9 +40,11 @@ public class DataStreamWordCount {
                     out.collect(Tuple2.of(words[i], 1));
                 }
             }
-        }).filter(x -> !x.f0.isEmpty()).keyBy(x -> x.f0).sum(1);
+        }).filter(x -> !x.f0.isEmpty())
+            .keyBy(x -> x.f0)
+            .reduce((x, y) -> Tuple2.of(x.f0, x.f1 + y.f1));
 
-        rstDs.print();
+        rstDs.addSink(new PrintSinkFunction<>());
 
         env.execute("DataStreamWordCount");
     }

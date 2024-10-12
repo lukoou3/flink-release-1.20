@@ -790,6 +790,7 @@ public class KeyedStream<T, KEY> extends DataStream<T> {
      * @return The transformed DataStream.
      */
     public SingleOutputStreamOperator<T> reduce(ReduceFunction<T> reducer) {
+        // 创建的是ReduceTransformation
         ReduceTransformation<T, KEY> reduce =
                 new ReduceTransformation<>(
                         "Keyed Reduce",
@@ -800,8 +801,10 @@ public class KeyedStream<T, KEY> extends DataStream<T> {
                         getKeyType(),
                         false);
 
+        // ReduceTransformation添加到transformations列表中
         getExecutionEnvironment().addOperator(reduce);
 
+        // 直接根据env和transformation创建SingleOutputStreamOperator
         return new SingleOutputStreamOperator<>(getExecutionEnvironment(), reduce);
     }
 

@@ -785,6 +785,10 @@ public abstract class StreamTask<OUT, OP extends StreamOperator<OUT>>
                 new SubTaskInitializationMetricsBuilder(
                         SystemClock.getInstance().absoluteTimeMillis());
         try {
+            /**
+             * 根据configuration创建operatorChain
+             * configuration中包含chain信息, 序列化后的function
+             */
             operatorChain =
                     getEnvironment().getTaskStateManager().isTaskDeployedAsFinished()
                             ? new FinishedOperatorChain<>(this, recordWriter)
