@@ -788,6 +788,8 @@ public abstract class StreamTask<OUT, OP extends StreamOperator<OUT>>
             /**
              * 根据configuration创建operatorChain
              * configuration中包含chain信息, 序列化后的function
+             * 传入当前StreamTask和recordWriter创建OperatorChain:
+             *
              */
             operatorChain =
                     getEnvironment().getTaskStateManager().isTaskDeployedAsFinished()

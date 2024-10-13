@@ -198,6 +198,12 @@ public abstract class OperatorChain<OUT, OP extends StreamOperator<OUT>>
             // we create the chain of operators and grab the collector that leads into the chain
             List<StreamOperatorWrapper<?, ?>> allOpWrappers =
                     new ArrayList<>(chainedConfigs.size());
+            /**
+             * TODO: 核心实现, 创建Operator的Output, 是除了head算子的output, 会递归调用
+             * 递归的调用createOutputCollector
+             * 如果是chain的最后一个算子, 返回RecordWriterOutput
+             * 如果非chain的最后一个算子, 返回CopyingChainingOutput或者ChainingOutput
+             */
             this.mainOperatorOutput =
                     createOutputCollector(
                             containingTask,
@@ -209,7 +215,12 @@ public abstract class OperatorChain<OUT, OP extends StreamOperator<OUT>>
                             containingTask.getMailboxExecutorFactory(),
                             operatorFactory != null);
 
+            // 似乎大部分情况都是operatorFactory != null
             if (operatorFactory != null) {
+                /**
+                 * 创建Operator, 就是把mainOperator(首个节点)和mainOperatorOutput连接起来, mainOperator的输出关联到mainOperatorOutput
+                 * 这样调用chain首个operator的函数，就会依次调用各个operator，最后输出到RecordWriterOutput，元素发送到下游
+                 */
                 Tuple2<OP, Optional<ProcessingTimeService>> mainOperatorAndTimeService =
                         StreamOperatorFactoryUtil.createOperator(
                                 operatorFactory,
@@ -713,6 +724,7 @@ public abstract class OperatorChain<OUT, OP extends StreamOperator<OUT>>
             boolean shouldAddMetric) {
         List<OutputWithChainingCheck<StreamRecord<T>>> allOutputs = new ArrayList<>(4);
 
+        // 如果是chain的最后一个算子, 返回RecordWriterOutput
         // create collectors for the network outputs
         for (NonChainedOutput streamOutput :
                 operatorConfig.getOperatorNonChainedOutputs(userCodeClassloader)) {
@@ -723,11 +735,13 @@ public abstract class OperatorChain<OUT, OP extends StreamOperator<OUT>>
             allOutputs.add(recordWriterOutput);
         }
 
+        // 如果不是chain的最后一个算子, 返回RecordWriterOutput
         // Create collectors for the chained outputs
         for (StreamEdge outputEdge : operatorConfig.getChainedOutputs(userCodeClassloader)) {
-            int outputId = outputEdge.getTargetId();
+            int outputId = outputEdge.getTargetId(); // 后一个节点id
             StreamConfig chainedOpConfig = chainedConfigs.get(outputId);
 
+            // output添加后一个节点, 递归的调用createOutputCollector
             WatermarkGaugeExposingOutput<StreamRecord<T>> output =
                     createOperatorChain(
                             containingTask,
@@ -805,6 +819,7 @@ public abstract class OperatorChain<OUT, OP extends StreamOperator<OUT>>
     }
 
     /**
+     * 递归地创建从给定的@param operatorConfig开始的运算符链。操作符是从头到尾创建的，并被包裹在WatermarkGaugeExposingOutput中。
      * Recursively create chain of operators that starts from the given {@param operatorConfig}.
      * Operators are created tail to head and wrapped into an {@link WatermarkGaugeExposingOutput}.
      */
@@ -905,6 +920,9 @@ public abstract class OperatorChain<OUT, OP extends StreamOperator<OUT>>
         }
 
         WatermarkGaugeExposingOutput<StreamRecord<IN>> currentOperatorOutput;
+        /**
+         * TODO: 如果开启对象重用, 则使用ChainingOutput包装, 否则使用CopyingChainingOutput包装
+         */
         if (containingTask.getExecutionConfig().isObjectReuseEnabled()) {
             currentOperatorOutput =
                     new ChainingOutput<>(
