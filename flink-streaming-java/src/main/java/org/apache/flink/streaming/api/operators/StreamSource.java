@@ -97,8 +97,13 @@ public class StreamSource<OUT, SRC extends SourceFunction<OUT>>
                             getRuntimeContext().getTaskInfo().getIndexOfThisSubtask());
         }
 
+        // 生成 Watermark 的时间间隔
         final long watermarkInterval = getExecutionConfig().getAutoWatermarkInterval();
 
+        /**
+         * ctx.collect(element) 会对lockingObject加锁，这是sourceTask的多个线程的原因，同时存在MailBox线程和LegacySourceFunctionThread
+         * @see org.apache.flink.streaming.api.operators.StreamSourceContexts.WatermarkContext#collect
+         */
         this.ctx =
                 StreamSourceContexts.getSourceContext(
                         timeCharacteristic,
@@ -110,6 +115,7 @@ public class StreamSource<OUT, SRC extends SourceFunction<OUT>>
                         emitProgressiveWatermarks);
 
         try {
+            // 就是我们传入的SourceFunction
             userFunction.run(ctx);
         } finally {
             if (latencyEmitter != null) {

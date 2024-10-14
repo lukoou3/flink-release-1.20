@@ -22,6 +22,7 @@ import org.apache.flink.runtime.io.network.partition.consumer.InputGate;
 import javax.annotation.Nullable;
 
 /**
+ * task中可调用的部分。
  * An invokable part of the task.
  *
  * <p>The TaskManager first calls the {@link #restore} method when executing a task. If the call

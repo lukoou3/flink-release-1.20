@@ -40,6 +40,7 @@ import org.apache.flink.runtime.jobgraph.IntermediateDataSetID;
 import org.apache.flink.runtime.jobgraph.IntermediateResultPartitionID;
 import org.apache.flink.runtime.jobgraph.OperatorID;
 import org.apache.flink.runtime.jobmanager.slots.TaskManagerGateway;
+import org.apache.flink.runtime.jobmaster.JobMasterId;
 import org.apache.flink.runtime.jobmaster.LogicalSlot;
 import org.apache.flink.runtime.messages.Acknowledge;
 import org.apache.flink.runtime.operators.coordination.OperatorEvent;
@@ -50,6 +51,7 @@ import org.apache.flink.runtime.shuffle.PartitionDescriptor;
 import org.apache.flink.runtime.shuffle.ProducerDescriptor;
 import org.apache.flink.runtime.shuffle.ShuffleDescriptor;
 import org.apache.flink.runtime.shuffle.ShuffleMaster;
+import org.apache.flink.runtime.taskexecutor.TaskExecutor;
 import org.apache.flink.runtime.taskexecutor.TaskExecutorOperatorEventGateway;
 import org.apache.flink.runtime.taskmanager.TaskManagerLocation;
 import org.apache.flink.util.CollectionUtil;
@@ -91,6 +93,9 @@ import static org.apache.flink.util.Preconditions.checkNotNull;
 import static org.apache.flink.util.Preconditions.checkState;
 
 /**
+ * vertex(顶点)的单次执行。虽然ExecutionVertex可以执行多次（用于恢复、重新计算、重新配置），但此类跟踪该顶点和资源的单次执行状态。
+ * 每个 Execution 表示一个 ExecutionVertex 的执行
+ *
  * A single execution of a vertex. While an {@link ExecutionVertex} can be executed multiple times
  * (for recovery, re-computation, re-configuration), this class tracks the state of a single
  * execution of that vertex and the resources.
@@ -550,6 +555,7 @@ public class Execution
     }
 
     /**
+     * 将execution部署到之前分配的资源。就是部署一个subTask
      * Deploys the execution to the previously assigned resource.
      *
      * @throws JobException if the execution cannot be deployed to the assigned resource
@@ -563,6 +569,7 @@ public class Execution
                 slot,
                 "In order to deploy the execution we first have to assign a resource via tryAssignResource.");
 
+        // 检查状态
         // Check if the TaskManager died in the meantime
         // This only speeds up the response to TaskManagers failing concurrently to deployments.
         // The more general check is the rpcTimeout of the deployment call
@@ -615,6 +622,17 @@ public class Execution
                     getAssignedResourceLocation(),
                     slot.getAllocationId());
 
+            /**
+             * TODO:构建一个部署描述对象：TDD
+             * Execution 中包含了一个 Task 执行所需要的各种信息，其实是通过 TaskDeploymentDescriptor 进行管理的
+             * 重要的一个信息：  InvokableClass
+             * 现在的目标是去部署一个Task，但是 Task 的类别有多种, 对应关系在StreamGraph类生成streamGraph使设置：
+             *  SourceStreamTask: LegacySourceTransformation, 用于运行之前实现SourceFunction方式实现的LegacySource
+             *  OneInputStreamTask: OneInputTransformation,大部分算子
+             *  TwoInputStreamTask: TwoInputTransformation
+             *  SourceOperatorStreamTask: SourceTransformation, 新source接口实现对应的task
+             *  ...
+             */
             final TaskDeploymentDescriptor deployment =
                     vertex.getExecutionGraphAccessor()
                             .getTaskDeploymentDescriptorFactory()
@@ -627,6 +645,7 @@ public class Execution
             // null taskRestore to let it be GC'ed
             taskRestore = null;
 
+            // 每个 Slot 中保存着该 slot 所在的 TaskExecutor 的 Gateway, 方便部署 Task
             final TaskManagerGateway taskManagerGateway = slot.getTaskManagerGateway();
 
             final ComponentMainThreadExecutor jobMasterMainThreadExecutor =
@@ -637,6 +656,12 @@ public class Execution
             // does not block
             // the main thread and sync back to the main thread once submission is completed.
             CompletableFuture.supplyAsync(
+                            /**
+                             * TODO: 提交taskManager部署subTask
+                             * 找到这个 ExecutionVertex 顶点的 Execution 对象对应的 slot 所在的从节点
+                             * 然后发送 RPC 请求给它让它部署这个Task，携带了一个非常重要的信息： deployment
+                             * TaskExecutor端: {@link TaskExecutor#submitTask(TaskDeploymentDescriptor, JobMasterId, Time)}
+                             */
                             () -> taskManagerGateway.submitTask(deployment, rpcTimeout), executor)
                     .thenCompose(Function.identity())
                     .whenCompleteAsync(

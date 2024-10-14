@@ -75,6 +75,7 @@ public class OneInputStreamTask<IN, OUT> extends StreamTask<OUT, OneInputStreamO
      * @param env The task environment for this task.
      */
     public OneInputStreamTask(Environment env) throws Exception {
+        // 构造函数初始化和StreamTask一样
         super(env);
     }
 
@@ -120,6 +121,7 @@ public class OneInputStreamTask<IN, OUT> extends StreamTask<OUT, OneInputStreamO
                     .getIOMetricGroup()
                     .reuseRecordsInputCounter(numRecordsIn);
 
+            // inputProcessor是StreamTask的属性, 处理输入元素的组件
             inputProcessor = new StreamOneInputProcessor<>(input, output, operatorChain);
         }
         mainOperator
@@ -158,6 +160,7 @@ public class OneInputStreamTask<IN, OUT> extends StreamTask<OUT, OneInputStreamO
 
     @SuppressWarnings("unchecked")
     private CheckpointedInputGate createCheckpointedInputGate() {
+        // 创建一个具备checkpoint功能的CheckpointedInputGate
         IndexedInputGate[] inputGates = getEnvironment().getAllInputGates();
 
         checkpointBarrierHandler =
@@ -183,6 +186,7 @@ public class OneInputStreamTask<IN, OUT> extends StreamTask<OUT, OneInputStreamO
     }
 
     private DataOutput<IN> createDataOutput(Counter numRecordsIn) {
+        // 初始化输出
         return new StreamTaskNetworkOutput<>(
                 operatorChain.getFinishedOnRestoreInputOrDefault(mainOperator),
                 inputWatermarkGauge,

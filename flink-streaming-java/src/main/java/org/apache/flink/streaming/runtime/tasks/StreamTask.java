@@ -60,6 +60,7 @@ import org.apache.flink.runtime.io.network.api.writer.SingleRecordWriter;
 import org.apache.flink.runtime.io.network.partition.ChannelStateHolder;
 import org.apache.flink.runtime.io.network.partition.consumer.IndexedInputGate;
 import org.apache.flink.runtime.io.network.partition.consumer.InputGate;
+import org.apache.flink.runtime.io.network.partition.consumer.SingleInputGate;
 import org.apache.flink.runtime.jobgraph.OperatorID;
 import org.apache.flink.runtime.jobgraph.tasks.CheckpointableTask;
 import org.apache.flink.runtime.jobgraph.tasks.CoordinatedTask;
@@ -87,9 +88,13 @@ import org.apache.flink.streaming.api.operators.InternalTimeServiceManagerImpl;
 import org.apache.flink.streaming.api.operators.StreamOperator;
 import org.apache.flink.streaming.api.operators.StreamTaskStateInitializer;
 import org.apache.flink.streaming.api.operators.StreamTaskStateInitializerImpl;
+import org.apache.flink.streaming.runtime.io.AbstractStreamTaskNetworkInput;
 import org.apache.flink.streaming.runtime.io.DataInputStatus;
+import org.apache.flink.streaming.runtime.io.PushingAsyncDataInput.DataOutput;
 import org.apache.flink.streaming.runtime.io.RecordWriterOutput;
 import org.apache.flink.streaming.runtime.io.StreamInputProcessor;
+import org.apache.flink.streaming.runtime.io.StreamOneInputProcessor;
+import org.apache.flink.streaming.runtime.io.StreamTaskNetworkInput;
 import org.apache.flink.streaming.runtime.io.checkpointing.BarrierAlignmentUtil;
 import org.apache.flink.streaming.runtime.io.checkpointing.CheckpointBarrierHandler;
 import org.apache.flink.streaming.runtime.partitioner.ConfigurableStreamPartitioner;
@@ -155,6 +160,11 @@ import static org.apache.flink.util.Preconditions.checkState;
 import static org.apache.flink.util.concurrent.FutureUtils.assertNoException;
 
 /**
+ * 所有streaming task的基类。任务是由TaskManager部署和执行的本地处理单元。
+ * 每个任务运行一个或多个StreamOperators，这些StreamOperators构成了任务的操作符链。
+ * 链接在一起的运算符在同一线程中同步执行，因此在同一流分区上执行。这些链的一个常见情况是连续的映射/平面映射/过滤任务。
+ * 任务链包含一个“head”操作符和多个链式操作符。StreamTask专门用于头运算符的类型：一个输入和两个输入任务，以及源、迭代头和迭代尾。
+ * Task类处理由head运算符读取的流的设置，以及由运算符链末端的运算符生成的流。请注意，链条可能会分叉，因此有多个末端。
  * Base class for all streaming tasks. A task is the unit of local processing that is deployed and
  * executed by the TaskManagers. Each task runs one or more {@link StreamOperator}s which form the
  * Task's operator chain. Operators that are chained together execute synchronously in the same
@@ -169,6 +179,7 @@ import static org.apache.flink.util.concurrent.FutureUtils.assertNoException;
  * produced by the operators at the ends of the operator chain. Note that the chain may fork and
  * thus have multiple ends.
  *
+ * task的生命周期如下所示:
  * <p>The life cycle of the task is set up as follows:
  *
  * <pre>{@code
@@ -411,6 +422,12 @@ public abstract class StreamTask<OUT, OP extends StreamOperator<OUT>>
                     .getIOMetricGroup()
                     .registerMailboxSizeSupplier(() -> mailbox.size());
 
+            /**
+             * TODO: 核心组件
+             * 构建 MailboxProcessor, 这是真正用来处理Mail的一个邮件处理器
+             * 其实真正处理数据邮件的处理，就是StreamTask的processInput方法
+             * 第一个参数，很重要，用来处理输入, 传入的是this::processInput
+             */
             this.mailboxProcessor =
                     new MailboxProcessor(
                             this::processInput, mailbox, actionExecutor, mailboxMetricsControl);
@@ -418,6 +435,7 @@ public abstract class StreamTask<OUT, OP extends StreamOperator<OUT>>
             // Should be closed last.
             resourceCloser.registerCloseable(mailboxProcessor);
 
+            // 初始化一个负责IO的线程池
             this.channelIOExecutor =
                     MdcUtils.scopeToJob(
                             environment.getJobID(),
@@ -425,6 +443,12 @@ public abstract class StreamTask<OUT, OP extends StreamOperator<OUT>>
                                     new ExecutorThreadFactory("channel-state-unspilling")));
             resourceCloser.registerCloseable(channelIOExecutor::shutdown);
 
+            /**
+             * 创建recordWriter的委托, 可能是SingleRecordWriter(大部分情况)或MultipleRecordWriters
+             * 内部持有的RecordWriter, 可能是ChannelSelectorRecordWriter或BroadcastRecordWriter
+             * RecordWriter就是负责task最终的buffer输出, 在task的chain中, 可能有多个多个算子, 最后一个算子的输出是RecordWriterOutput, 前面的算子的输出是ChainingOutput
+             * O1(ChainingOutput) ----->  O2(ChainingOutput)  ---> O3(ChainingOutput) -----> O4(RecordWriterOutput)
+             */
             this.recordWriter = createRecordWriterDelegate(configuration, environment);
             // Release the output resources. this method should never fail.
             resourceCloser.registerCloseable(this::releaseOutputResources);
@@ -459,6 +483,7 @@ public abstract class StreamTask<OUT, OP extends StreamOperator<OUT>>
             environment.setMainMailboxExecutor(mainMailboxExecutor);
             environment.setAsyncOperationsThreadPool(asyncOperationsThreadPool);
 
+            // 创建 StateBackend，按照我们的配置，一般获取到的是 FsStateBackend
             this.stateBackend = createStateBackend();
             this.checkpointStorage = createCheckpointStorage(stateBackend);
             this.changelogWriterAvailabilityProvider =
@@ -515,6 +540,7 @@ public abstract class StreamTask<OUT, OP extends StreamOperator<OUT>>
                                     environment,
                                     configuration.getMaxSubtasksPerChannelStateFile())
                             : ChannelStateWriter.NO_OP;
+            // subtaskCheckpointCoordinator
             this.subtaskCheckpointCoordinator =
                     new SubtaskCheckpointCoordinatorImpl(
                             checkpointStorageAccess,
@@ -539,6 +565,7 @@ public abstract class StreamTask<OUT, OP extends StreamOperator<OUT>>
             // Register to stop all timers and threads. Should be closed first.
             resourceCloser.registerCloseable(this::tryShutdownTimerService);
 
+            // 将 ChannelStateWriter 注入到 InputChannel 和 ResultSubPartition 中
             injectChannelStateWriterIntoChannels();
 
             environment.getMetricGroup().getIOMetricGroup().setEnableBusyTime(true);
@@ -627,6 +654,34 @@ public abstract class StreamTask<OUT, OP extends StreamOperator<OUT>>
     protected void cancelTask() throws Exception {}
 
     /**
+     * 此方法实现任务的默认操作（例如，处理输入中的一个事件）。实现（通常）应该是非阻塞的。
+     * 从SingleInputGate读取数据调用的流程如下：
+     * @see StreamOneInputProcessor#processInput()
+     * @see AbstractStreamTaskNetworkInput#emitNext(DataOutput)
+     * @see CheckpointedInputGate#pollNext()
+     * @see InputGateWithMetrics#pollNext()
+     * @see SingleInputGate#pollNext()
+     * @see SingleInputGate#getNextBufferOrEvent
+     * @see SingleInputGate#waitAndGetNextData
+     * @see org.apache.flink.runtime.io.network.partition.consumer.RemoteInputChannel#getNextBuffer
+     *
+     * 处理每条数据在StreamTaskNetworkInput#emitNext(DataOutput output)中调用processElement(deserializationDelegate.getInstance(), output);
+     * @see StreamTaskNetworkInput#emitNext(DataOutput output)
+     * @see StreamTaskNetworkInput#processElement 处理元素(Record/Watermark)
+     *      当是元素时：output.emitRecord(recordOrMark.asRecord())，实际调用的是:
+     *      @see OneInputStreamTask.StreamTaskNetworkOutput#emitRecord
+     *      emitRecord方法中调用第一个operator的processElement: operator.processElement(record)
+     *      然后就是一个一个operator的调用，最后输出元素
+     *
+     * 此方法中inputProcessor.processInput()返回的InputStatus会提示当前是否还有元素
+     *      如果当前还有元素直接返回，接下里循环继续处理下一个元素
+     *      如果当前没有元素了，则提示mailbox停止默认行为(StreamTask.processInput)，并且注册回调函数当有数据可读时恢复默认行为(StreamTask.processInput)
+     *      MailboxController#suspendDefaultAction()停止默认行为时会给mailbox发送"signal check"，使processMail能进入事件处理，并且阻塞知道有数据可读
+     *
+     * MailboxProcessor#runMailboxLoop方法处理邮件循环时，不停的调用MailboxProcessor#processMail(处理mail事件)和StreamTask.processInput(处理输入元素)
+     * operator chain处理元素和mailbox处理事件是在一个线程运行的，不用考虑线程安全问题。非source task都是这样。
+     * source task中有额外的线程处理输入元素，加了一个lock。
+     *
      * This method implements the default action of the task (e.g. processing one event from the
      * input). Implementations should (in general) be non-blocking.
      *
@@ -681,6 +736,10 @@ public abstract class StreamTask<OUT, OP extends StreamOperator<OUT>>
             // data availability has changed in the meantime; retry immediately
             return;
         }
+        /**
+         * controller.suspendDefaultAction(timer): 暂停默认行为
+         * resumeFuture: 有新数据写入，恢复默认行为
+         */
         assertNoException(
                 resumeFuture.thenRun(
                         new ResumeWrapper(controller.suspendDefaultAction(timer), timer)));
@@ -771,6 +830,7 @@ public abstract class StreamTask<OUT, OP extends StreamOperator<OUT>>
         restoreInternal();
     }
 
+    // 就是之前版本的beforeInvoke()方法
     void restoreInternal() throws Exception {
         if (isRunning) {
             LOG.debug("Re-restore attempt rejected.");
@@ -786,6 +846,7 @@ public abstract class StreamTask<OUT, OP extends StreamOperator<OUT>>
                         SystemClock.getInstance().absoluteTimeMillis());
         try {
             /**
+             * 初始化 OperatorChain
              * 根据configuration创建operatorChain
              * configuration中包含chain信息, 序列化后的function
              * 传入当前StreamTask和recordWriter创建OperatorChain:
@@ -795,6 +856,8 @@ public abstract class StreamTask<OUT, OP extends StreamOperator<OUT>>
                     getEnvironment().getTaskStateManager().isTaskDeployedAsFinished()
                             ? new FinishedOperatorChain<>(this, recordWriter)
                             : new RegularOperatorChain<>(this, recordWriter);
+
+            // 获取 main Operator, 一个接一个调用，从前到后，和spark相反
             mainOperator = operatorChain.getMainOperator();
 
             getEnvironment()
@@ -802,6 +865,7 @@ public abstract class StreamTask<OUT, OP extends StreamOperator<OUT>>
                     .getRestoreCheckpointId()
                     .ifPresent(restoreId -> latestReportCheckpointId = restoreId);
 
+            // 子类实现，执行自己的初始化
             // task specific initialization
             init();
             configuration.clearInitialConfigs();
@@ -812,11 +876,13 @@ public abstract class StreamTask<OUT, OP extends StreamOperator<OUT>>
             // -------- Invoke --------
             LOG.debug("Invoking {}", getName());
 
+            // restoreStateAndGates
             // we need to make sure that any triggers scheduled in open() cannot be
             // executed before all operators are opened
             CompletableFuture<Void> allGatesRecoveredFuture =
                     actionExecutor.call(() -> restoreStateAndGates(initializationMetrics));
 
+            // 运行mailbox，直到所有gates都恢复。
             // Run mailbox until all gates will be recovered.
             mailboxProcessor.runMailboxLoop();
 
@@ -910,6 +976,7 @@ public abstract class StreamTask<OUT, OP extends StreamOperator<OUT>>
         // Allow invoking method 'invoke' without having to call 'restore' before it.
         if (!isRunning) {
             LOG.debug("Restoring during invoke will be called.");
+            // task init 操作, 就是之前版本的beforeInvoke()方法
             restoreInternal();
         }
 
@@ -920,12 +987,17 @@ public abstract class StreamTask<OUT, OP extends StreamOperator<OUT>>
 
         // let the task do its work
         getEnvironment().getMetricGroup().getIOMetricGroup().markTaskStart();
+        /**
+         * task不断循环运行，运行邮件循环
+         * 实时任务中会一直循环不断运行, 处理元素和各种事件
+         */
         runMailboxLoop();
 
         // if this left the run() method cleanly despite the fact that this was canceled,
         // make sure the "clean shutdown" is not attempted
         ensureNotCanceled();
 
+        // task结束，做些清理工作
         afterInvoke();
     }
 
@@ -1263,6 +1335,11 @@ public abstract class StreamTask<OUT, OP extends StreamOperator<OUT>>
         checkForcedFullSnapshotSupport(checkpointOptions);
 
         CompletableFuture<Boolean> result = new CompletableFuture<>();
+        /**
+         * 触发Checkpoint事件
+         * 提交Checkpoint完成的事件在，TaskExecutor的rpc接口由jobManage调用
+         * @see org.apache.flink.runtime.taskexecutor.TaskExecutor#confirmCheckpoint
+         */
         mainMailboxExecutor.execute(
                 () -> {
                     try {

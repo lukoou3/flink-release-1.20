@@ -101,16 +101,20 @@ public class SourceStreamTask<
     private volatile FinishingReason finishingReason = FinishingReason.END_OF_DATA;
 
     public SourceStreamTask(Environment env) throws Exception {
+        // 调用重载构造
         this(env, new Object());
     }
 
     private SourceStreamTask(Environment env, Object lock) throws Exception {
+        // 调用父类构造，父类就是 StrewamTask， 由此可见， SourceStreamTask 比 StreamTask 多启动了一个线程，用来接收数据
         super(
                 env,
                 null,
                 FatalExitExceptionHandler.INSTANCE,
                 StreamTaskActionExecutor.synchronizedExecutor(lock));
+        // SourceStreamTask多个lock
         this.lock = Preconditions.checkNotNull(lock);
+        // SourceStreamTask和其他StreamTask的区别就是多个一个线程用来调用sourceFunction接收数据
         this.sourceThread = new LegacySourceFunctionThread();
 
         getEnvironment().getMetricGroup().getIOMetricGroup().setEnableBusyTime(false);
@@ -118,6 +122,7 @@ public class SourceStreamTask<
 
     @Override
     protected void init() {
+        // 这就是我们写的SourceFunction, mainOperator取出的udf肯定是SourceFunction(肯定是首个节点)
         // we check if the source is actually inducing the checkpoints, rather
         // than the trigger
         SourceFunction<?> source = mainOperator.getUserFunction();
@@ -183,9 +188,10 @@ public class SourceStreamTask<
 
     @Override
     protected void processInput(MailboxDefaultAction.Controller controller) throws Exception {
-
+        // 看注释是停止默认行为，不会再调用这个方法了，sourceThread不会多次start
         controller.suspendDefaultAction();
 
+        // 启动sourceThread，接收source数据
         // Against the usual contract of this method, this implementation is not step-wise but
         // blocking instead for
         // compatibility reasons with the current source interface (source functions run as a loop,
@@ -331,6 +337,11 @@ public class SourceStreamTask<
         @Override
         public void run() {
             try {
+                /**
+                 * 运行SourceFunction
+                 * mainOperator是当前这个Task中的OperatorChain中的第一个Operator, 第一个Operator就是我们传入的SourceFunction
+                 * 在任何Task执行的时候，其实都是一个OperatorChain
+                 */
                 if (!operatorChain.isTaskDeployedAsFinished()) {
                     LOG.debug(
                             "Legacy source {} skip execution since the task is finished on restore",

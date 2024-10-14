@@ -197,6 +197,17 @@ import static org.apache.flink.util.Preconditions.checkArgument;
 import static org.apache.flink.util.Preconditions.checkNotNull;
 
 /**
+ * TaskExecutor实现。TaskExecutor负责执行多个Task
+ * TaskExecutor rpc提供的接口在TaskExecutorGateway，里面有提交task等方法接口
+ * TaskExecutor 的 API 分类:
+ *   1、slot 的资源管理：slot 的分配/释放；
+ *   2、task 运行：接收来自 JobManager 的 task 提交、也包括该 task 对应的 Partition（中间结果）信息；
+ *   3、checkpoint 相关的处理；
+ *   4、心跳监控、连接建立等。
+ *  总结一下 TaskExecutor 的功能
+ *    1、本机 Slot 资源管理
+ *    2、Task 提交和执行
+ *    3、Checkpoint 触发
  * TaskExecutor implementation. The task executor is responsible for the execution of multiple
  * {@link Task}.
  */
@@ -656,6 +667,15 @@ public class TaskExecutor extends RpcEndpoint implements TaskExecutorGateway {
     // Task lifecycle RPCs
     // ----------------------------------------------------------------------
 
+    /**
+     * JobManager给这个TaskManager提交一个subTask
+     * 该 rpc 方法的处理做两件事：
+     *   1、先生成 Task 在执行过程中，需要的各种组件，然后封装成一个 Task 实例对象
+     *   2、启动 Task 内部的工作线程，其实目标对象就是 Task 自己。
+     * 所以关于 Task 执行的核心逻辑，在 Task 的 run() 方法的内部
+     * 1、构建一个 Task 对象，这个 Task ，不涉及到具体的 StreamTask 的类别，是一个通用的封装，简单说，就只是规定了 Task 的启动流程
+     * 2、通过一个线程来启动这个 Task
+     */
     @Override
     public CompletableFuture<Acknowledge> submitTask(
             TaskDeploymentDescriptor tdd, JobMasterId jobMasterId, Time timeout) {
@@ -666,6 +686,7 @@ public class TaskExecutor extends RpcEndpoint implements TaskExecutorGateway {
 
             final ExecutionAttemptID executionAttemptID = tdd.getExecutionAttemptId();
 
+            // 做些校验，验证JobManager中是否有这个job等
             final JobTable.Connection jobManagerConnection =
                     jobTable.getConnection(jobId)
                             .orElseThrow(
@@ -680,6 +701,7 @@ public class TaskExecutor extends RpcEndpoint implements TaskExecutorGateway {
                                         return new TaskSubmissionException(message);
                                     });
 
+            // 还是校验
             if (!Objects.equals(jobManagerConnection.getJobMasterId(), jobMasterId)) {
                 final String message =
                         "Rejecting the task submission because the job manager leader id "
@@ -692,6 +714,7 @@ public class TaskExecutor extends RpcEndpoint implements TaskExecutorGateway {
                 throw new TaskSubmissionException(message);
             }
 
+            // 校验Slot申请了，可用。首先尝试将 Slot 置为 active，意味着开始使用了
             if (!taskSlotTable.tryMarkSlotActive(jobId, tdd.getAllocationId())) {
                 final String message =
                         "No task slot allocated for job ID "
@@ -703,6 +726,7 @@ public class TaskExecutor extends RpcEndpoint implements TaskExecutorGateway {
                 throw new TaskSubmissionException(message);
             }
 
+            // 下载 Task 运行需要的资源
             // re-integrate offloaded data and deserialize shuffle descriptors
             try {
                 tdd.loadBigData(
@@ -715,6 +739,7 @@ public class TaskExecutor extends RpcEndpoint implements TaskExecutorGateway {
                         "Could not re-integrate offloaded TaskDeploymentDescriptor data.", e);
             }
 
+            // 反序列化之前task序列化的信息
             // deserialize the pre-serialized information
             final JobInformation jobInformation;
             final TaskInformation taskInformation;
@@ -827,6 +852,17 @@ public class TaskExecutor extends RpcEndpoint implements TaskExecutorGateway {
                 throw new TaskSubmissionException("Could not submit task.", e);
             }
 
+            /**
+             *  在这以上的步骤，都只是为了初始化一些组件，辅助 Task 在运行的过程中使用和完成一些工作
+             */
+
+            /**
+             * TODO: 构建一个 Task 抽象对象！
+             * 从节点启动的时候，实质上，是启动 TaskExecutor。但是启动 TaskExecutor 需要一系列的基础服务。这些基础服务都被包装在： TaskManagerServices 对象中
+             *   所以看到这个地方的源码，为了完整性，首先去了解： TaskManagerServices 的初始化中的其中一件最重要的事情：初始化ShuffleEnvironment
+             *   TaskExecutor 的内部，会运行一个 ShuffleEnvironment
+             *   ShuffleEnvironment ConnectionManager(NettyServer NettyClient)
+             */
             Task task =
                     new Task(
                             jobInformation,
@@ -868,16 +904,27 @@ public class TaskExecutor extends RpcEndpoint implements TaskExecutorGateway {
             boolean taskAdded;
 
             try {
+                /**
+                 * Task 注册
+                 * 每一个使用了一个 slot 来执行的 Task ，最终都封装成了 TaskSlot
+                 */
                 taskAdded = taskSlotTable.addTask(task);
             } catch (SlotNotFoundException | SlotNotActiveException e) {
                 throw new TaskSubmissionException("Could not submit task.", e);
             }
 
             if (taskAdded) {
+                /**
+                 * 启动task, 启动task的executingThread线程(target=Task.this), Task实现了Runnable
+                 * 也就是启动task线程，运行Task的run方法，run方法调用doRun方法
+                 * 总结起来就是启动task线程，运行Task的doRun方法
+                 * @see Task#doRun()
+                 */
                 task.startTaskThread();
 
                 setupResultPartitionBookkeeping(
                         tdd.getJobId(), tdd.getProducedPartitions(), task.getTerminationFuture());
+                // 回复jobManage task启动完成
                 return CompletableFuture.completedFuture(Acknowledge.get());
             } else {
                 final String message =
