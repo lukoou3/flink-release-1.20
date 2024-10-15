@@ -344,6 +344,28 @@ public class StreamingJobGraphGenerator {
             jobGraph.setJobStatusHooks(streamGraph.getJobStatusHooks());
         }
 
+        /**
+         * jobGraph主要的信息都在taskVertices属性里: Map<JobVertexID, JobVertex> , JobVertexID -> JobVertex, 保存的每个chain的信息
+         * JobVertex: 代表一个chain, 每个JobVertex中包含一个或多个Operators, JobVertex的主要属性:
+         *   List<JobEdge> inputs: 输入边
+         *   Map<IntermediateDataSetID, IntermediateDataSet> results: 输出的中间数据集
+         * JobEdge: 在 StramGraph中StreamNode之间是通过StreamEdge建立连接的。在JobEdge中对应的是JobEdge。JobEdge的主要属性:
+         *   IntermediateDataSet source: JobEdge的source
+         *   JobVertex target: JobEdge的target
+         * IntermediateDataSet: JobVertex产生的数据被抽象为IntermediateDataSet,字面意思为中间数据集。IntermediateDataSet的主要属性:
+         *  JobVertex producer: 生产这个dataset的operation
+         *  List<JobEdge> consumers: 消费这个dataset的jobEdge
+         * StreamConfig: StreamGraph中的每一个StreamNode在生成JobGraph的过程中都会创建一个对应的StreamConfig。
+         *   StreamConfig中保存了这个算子(operator)在运行是需要的所有配置信息，这些信息都是通过 key/value 的形式存储在 Configuration 中的。
+         *   这些配置信息最终会保存在JobVertex的configuration属性中, TaskExecutor端部署运行task时会从中反序列出chain中operator的udf,配置等创建出operatorChain, mainOperator, 最终运行的是mainOperator
+         * jobGraph的抽象:
+         *   JobVertex(O1) -> IntermediateDataSet -> JobEdge -> JobVertex(O2) -> IntermediateDataSet -> JobEdge -> JobVertex(O3)
+         *   jobGraph和streamGraph相比多了个IntermediateDataSet(中间数据集)
+         *   对于IntermediateDataSet来说, JobVertex是其生产者, JobEdge是其消费者
+         *   JobEdge来说, IntermediateDataSet是其source, JobVertex是其target
+         */
+        Iterable<JobVertex> vertices = jobGraph.getVertices(); // 主要的信息都在这里
+        LOG.info("jobVertices:{}", jobVertices); // jobVertices变量中也是相同的vertices信息
         return jobGraph;
     }
 

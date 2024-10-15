@@ -1,7 +1,9 @@
 package com.test.stream;
 
 import org.apache.flink.api.common.functions.RichFlatMapFunction;
+import org.apache.flink.api.common.typeinfo.Types;
 import org.apache.flink.api.java.tuple.Tuple2;
+import org.apache.flink.api.java.typeutils.TupleTypeInfo;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.streaming.api.datastream.DataStreamSource;
 import org.apache.flink.streaming.api.datastream.DataStream;
@@ -18,7 +20,7 @@ public class DataStreamWordCount {
         Configuration configuration = new Configuration();
         configuration.setString("heartbeat.timeout", "300000");
         StreamExecutionEnvironment env = StreamExecutionEnvironment.getExecutionEnvironment(configuration);
-        env.setParallelism(1);
+        env.setParallelism(2);
 
         DataStreamSource<String> textDs = env.addSource(new CustomSourceFunction<String>() {
             @Override
@@ -40,7 +42,8 @@ public class DataStreamWordCount {
                     out.collect(Tuple2.of(words[i], 1));
                 }
             }
-        }).filter(x -> !x.f0.isEmpty())
+        }).filter(x -> true)
+            .map(x -> x, Types.TUPLE(Types.STRING, Types.INT)).startNewChain().filter(x -> true).filter(x -> !x.f0.isEmpty())
             .keyBy(x -> x.f0)
             .reduce((x, y) -> Tuple2.of(x.f0, x.f1 + y.f1));
 
