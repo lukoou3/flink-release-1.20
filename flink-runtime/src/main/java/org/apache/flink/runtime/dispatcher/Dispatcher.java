@@ -54,6 +54,9 @@ import org.apache.flink.runtime.entrypoint.ClusterEntryPointExceptionUtils;
 import org.apache.flink.runtime.executiongraph.AccessExecutionGraph;
 import org.apache.flink.runtime.executiongraph.ArchivedExecutionGraph;
 import org.apache.flink.runtime.executiongraph.ArchivedExecutionJobVertex;
+import org.apache.flink.runtime.executiongraph.DefaultExecutionGraphBuilder;
+import org.apache.flink.runtime.executiongraph.Execution;
+import org.apache.flink.runtime.executiongraph.JobStatusListener;
 import org.apache.flink.runtime.heartbeat.HeartbeatServices;
 import org.apache.flink.runtime.highavailability.HighAvailabilityServices;
 import org.apache.flink.runtime.highavailability.JobResultEntry;
@@ -65,12 +68,18 @@ import org.apache.flink.runtime.jobgraph.JobVertex;
 import org.apache.flink.runtime.jobgraph.JobVertexID;
 import org.apache.flink.runtime.jobgraph.OperatorID;
 import org.apache.flink.runtime.jobmanager.JobGraphWriter;
+import org.apache.flink.runtime.jobmanager.OnCompletionActions;
+import org.apache.flink.runtime.jobmaster.ExecutionDeploymentTracker;
 import org.apache.flink.runtime.jobmaster.JobManagerRunner;
 import org.apache.flink.runtime.jobmaster.JobManagerRunnerResult;
 import org.apache.flink.runtime.jobmaster.JobManagerSharedServices;
+import org.apache.flink.runtime.jobmaster.JobMaster;
 import org.apache.flink.runtime.jobmaster.JobMasterGateway;
+import org.apache.flink.runtime.jobmaster.JobMasterServiceLeadershipRunner;
 import org.apache.flink.runtime.jobmaster.JobResult;
+import org.apache.flink.runtime.jobmaster.SlotPoolServiceSchedulerFactory;
 import org.apache.flink.runtime.jobmaster.factories.DefaultJobManagerJobMetricGroupFactory;
+import org.apache.flink.runtime.jobmaster.factories.DefaultJobMasterServiceFactory;
 import org.apache.flink.runtime.messages.Acknowledge;
 import org.apache.flink.runtime.messages.FlinkJobNotFoundException;
 import org.apache.flink.runtime.messages.FlinkJobTerminatedWithoutCancellationException;
@@ -79,6 +88,7 @@ import org.apache.flink.runtime.messages.webmonitor.JobDetails;
 import org.apache.flink.runtime.messages.webmonitor.JobsOverview;
 import org.apache.flink.runtime.messages.webmonitor.MultipleJobsDetails;
 import org.apache.flink.runtime.metrics.MetricNames;
+import org.apache.flink.runtime.metrics.groups.JobManagerJobMetricGroup;
 import org.apache.flink.runtime.metrics.groups.JobManagerMetricGroup;
 import org.apache.flink.runtime.operators.coordination.CoordinationRequest;
 import org.apache.flink.runtime.operators.coordination.CoordinationResponse;
@@ -92,7 +102,9 @@ import org.apache.flink.runtime.rpc.FatalErrorHandler;
 import org.apache.flink.runtime.rpc.FencedRpcEndpoint;
 import org.apache.flink.runtime.rpc.RpcService;
 import org.apache.flink.runtime.rpc.RpcServiceUtils;
+import org.apache.flink.runtime.scheduler.DefaultExecutionDeployer;
 import org.apache.flink.runtime.scheduler.ExecutionGraphInfo;
+import org.apache.flink.runtime.scheduler.SchedulerBase;
 import org.apache.flink.runtime.webmonitor.retriever.GatewayRetriever;
 import org.apache.flink.util.CollectionUtil;
 import org.apache.flink.util.ExceptionUtils;
@@ -123,6 +135,7 @@ import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.CompletionException;
 import java.util.concurrent.Executor;
@@ -516,6 +529,33 @@ public abstract class Dispatcher extends FencedRpcEndpoint<DispatcherId>
 
     @Override
     public CompletableFuture<Acknowledge> submitJob(JobGraph jobGraph, Time timeout) {
+        /**
+         * 服务端处理jobGraph提交:
+         *  @see Dispatcher#submitJob(JobGraph, Time)
+         *  @see Dispatcher#internalSubmitJob(JobGraph)
+         *  @see Dispatcher#persistAndRunJob(JobGraph)
+         *  @see Dispatcher#runJob(JobManagerRunner, Dispatcher.ExecutionType)
+         *  @see JobMasterServiceLeadershipRunner#start(): JobManagerRunner会竞争leader,一旦被选举为 leader,就会启动一个 JobMaster
+         *  @see JobMasterServiceLeadershipRunner#grantLeadership(UUID): 被选举为leader, 启动JobMaster
+         *  @see DefaultJobMasterServiceFactory#internalCreateJobMasterService(UUID, OnCompletionActions)
+         *    jobMaster = new JobMaster: JobMaster内会初始化schedulerNG(生成ExecutionGraph), schedulerNG负责调度部署Task
+         *    jobMaster.start(): 启动JobMaster, 转到JobMaster的onStart()方法, 因为JobMaster是一个RpcEndpoint
+         *
+         * JobMaster的初始化：
+         * @see JobMaster#createScheduler(SlotPoolServiceSchedulerFactory, ExecutionDeploymentTracker, JobManagerJobMetricGroup, JobStatusListener):
+         *    SchedulerBase(DefaultScheduler)持有executionGraph的引用：ExecutionGraph executionGraph
+         * jobGraph => executionGraph：
+         * @see SchedulerBase#createAndRestoreExecutionGraph
+         * @see DefaultExecutionGraphBuilder#buildGraph: TODO 构建ExecutionGraph的核心方法
+         *
+         * JobMaster的start：
+         * @see JobMaster#onStart(): startJobExecution() -> startScheduling() -> schedulerNG.startScheduling()
+         * @see JobMaster#startJobExecution()
+         * @see SchedulerBase#startScheduling()
+         * @see DefaultExecutionDeployer#allocateSlotsAndDeploy(List, Map)
+         * @see DefaultExecutionDeployer#deployAll(List)
+         * @see Execution#deploy(): 部署一个subTask
+         */
         final JobID jobID = jobGraph.getJobID();
         try (MdcCloseable ignored = MdcUtils.withContext(MdcUtils.asContextData(jobID))) {
             log.info("Received JobGraph submission '{}' ({}).", jobGraph.getName(), jobID);

@@ -20,6 +20,7 @@ package org.apache.flink.client.deployment.executors;
 
 import org.apache.flink.annotation.Internal;
 import org.apache.flink.api.common.Plan;
+import org.apache.flink.api.common.time.Time;
 import org.apache.flink.api.dag.Pipeline;
 import org.apache.flink.client.program.PerJobMiniClusterFactory;
 import org.apache.flink.configuration.Configuration;
@@ -27,11 +28,34 @@ import org.apache.flink.configuration.DeploymentOptions;
 import org.apache.flink.configuration.TaskManagerOptions;
 import org.apache.flink.core.execution.JobClient;
 import org.apache.flink.core.execution.PipelineExecutor;
+import org.apache.flink.runtime.checkpoint.CheckpointIDCounter;
+import org.apache.flink.runtime.checkpoint.CheckpointsCleaner;
+import org.apache.flink.runtime.checkpoint.CompletedCheckpointStore;
+import org.apache.flink.runtime.concurrent.ComponentMainThreadExecutor;
+import org.apache.flink.runtime.dispatcher.Dispatcher;
+import org.apache.flink.runtime.dispatcher.DispatcherGateway;
+import org.apache.flink.runtime.executiongraph.DefaultExecutionGraphBuilder;
+import org.apache.flink.runtime.executiongraph.Execution;
+import org.apache.flink.runtime.executiongraph.JobStatusListener;
 import org.apache.flink.runtime.jobgraph.JobGraph;
+import org.apache.flink.runtime.jobmanager.OnCompletionActions;
+import org.apache.flink.runtime.jobmaster.ExecutionDeploymentTracker;
+import org.apache.flink.runtime.jobmaster.JobManagerRunner;
+import org.apache.flink.runtime.jobmaster.JobMaster;
+import org.apache.flink.runtime.jobmaster.JobMasterServiceLeadershipRunner;
+import org.apache.flink.runtime.jobmaster.SlotPoolServiceSchedulerFactory;
+import org.apache.flink.runtime.jobmaster.factories.DefaultJobMasterServiceFactory;
+import org.apache.flink.runtime.metrics.groups.JobManagerJobMetricGroup;
 import org.apache.flink.runtime.minicluster.MiniCluster;
 import org.apache.flink.runtime.minicluster.MiniClusterConfiguration;
+import org.apache.flink.runtime.scheduler.DefaultExecutionDeployer;
+import org.apache.flink.runtime.scheduler.SchedulerBase;
+import org.apache.flink.runtime.scheduler.VertexParallelismStore;
 
 import java.net.MalformedURLException;
+import java.util.List;
+import java.util.Map;
+import java.util.UUID;
 import java.util.concurrent.CompletableFuture;
 import java.util.function.Function;
 
@@ -80,6 +104,39 @@ public class LocalExecutor implements PipelineExecutor {
 
         final JobGraph jobGraph = getJobGraph(pipeline, effectiveConfig, userCodeClassloader);
 
+        /**
+         * local模式提交jobGraph:
+         *  @see PerJobMiniClusterFactory#submitJob(JobGraph, ClassLoader)
+         *  @see MiniCluster#submitJob(JobGraph)
+         *  @see DispatcherGateway#submitJob(JobGraph, Time): 提交rpc请求到Dispatcher服务端
+         *
+         * 服务端处理:
+         *  @see Dispatcher#submitJob(JobGraph, Time)
+         *  @see Dispatcher#internalSubmitJob(JobGraph)
+         *  @see Dispatcher#persistAndRunJob(JobGraph)
+         *  @see Dispatcher#runJob(JobManagerRunner, Dispatcher.ExecutionType)
+         *  @see JobMasterServiceLeadershipRunner#start(): JobManagerRunner会竞争leader,一旦被选举为 leader,就会启动一个 JobMaster
+         *  @see JobMasterServiceLeadershipRunner#grantLeadership(UUID): 被选举为leader, 启动JobMaster
+         *  @see DefaultJobMasterServiceFactory#internalCreateJobMasterService(UUID, OnCompletionActions)
+         *    jobMaster = new JobMaster: JobMaster内会初始化schedulerNG(生成ExecutionGraph), schedulerNG负责调度部署Task
+         *    jobMaster.start(): 启动JobMaster, 转到JobMaster的onStart()方法, 因为JobMaster是一个RpcEndpoint
+         *
+         * JobMaster的初始化：
+         * @see JobMaster#createScheduler(SlotPoolServiceSchedulerFactory, ExecutionDeploymentTracker, JobManagerJobMetricGroup, JobStatusListener):
+         *    SchedulerBase(DefaultScheduler)持有executionGraph的引用：ExecutionGraph executionGraph
+         * jobGraph => executionGraph：
+         * @see SchedulerBase#createAndRestoreExecutionGraph
+         * @see DefaultExecutionGraphBuilder#buildGraph: TODO 构建ExecutionGraph的核心方法
+         *
+         * JobMaster的start：
+         * @see JobMaster#onStart(): startJobExecution() -> startScheduling() -> schedulerNG.startScheduling()
+         * @see JobMaster#startJobExecution()
+         * @see SchedulerBase#startScheduling()
+         * @see DefaultExecutionDeployer#allocateSlotsAndDeploy(List, Map)
+         * @see DefaultExecutionDeployer#deployAll(List)
+         * @see Execution#deploy(): 部署一个subTask
+         *
+         */
         return PerJobMiniClusterFactory.createWithFactory(effectiveConfig, miniClusterFactory)
                 .submitJob(jobGraph, userCodeClassloader);
     }

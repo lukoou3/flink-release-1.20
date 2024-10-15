@@ -244,9 +244,11 @@ public class JobMasterServiceLeadershipRunner implements JobManagerRunner, Leade
         }
     }
 
+    // 被选举为leader
     @Override
     public void grantLeadership(UUID leaderSessionID) {
         runIfStateRunning(
+                // 启动JobMaster
                 () -> startJobMasterServiceProcessAsync(leaderSessionID),
                 "starting a new JobMasterServiceProcess");
     }

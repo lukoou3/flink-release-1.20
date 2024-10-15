@@ -101,6 +101,10 @@ public class DefaultJobMasterServiceFactory implements JobMasterServiceFactory {
                 executor);
     }
 
+    /**
+     * 创建JobMaster服务
+     *
+     */
     private JobMasterService internalCreateJobMasterService(
             UUID leaderSessionId, OnCompletionActions onCompletionActions) throws Exception {
 

@@ -94,12 +94,17 @@ public class ExecutionJobVertex
 
     private final JobVertex jobVertex;
 
+    // 并行子任务数组, ExecutionVertex对应一个并行subTask
     @Nullable private ExecutionVertex[] taskVertices;
 
+    // 输出中间结果
     @Nullable private IntermediateResult[] producedDataSets;
 
+    // 输入中间结果, 这里怎么是IntermediateResult而不是ExecutionEdge。
+    // Flink1.13版本构建ExecutionGraph拓扑做了优化, ExecutionEdge被EdgeManager替换, 此外，ExecutionEdge及其所有相关调用都被ConsumerPartitionGroup和ConsumerVertexGroup替换。https://issues.apache.org/jira/browse/FLINK-21326
     @Nullable private List<IntermediateResult> inputs;
 
+    // 并行度信息
     private final VertexParallelismInformation parallelismInfo;
 
     private final SlotSharingGroup slotSharingGroup;
@@ -124,6 +129,11 @@ public class ExecutionJobVertex
 
     @Nullable private InputSplitAssigner splitAssigner;
 
+    /**
+     * ExecutionJobVertex的构造函数：只是把JobVertex传入
+     * ExecutionGraph的转换在initialize方法中
+     * @see ExecutionJobVertex#initialize
+     */
     @VisibleForTesting
     public ExecutionJobVertex(
             InternalExecutionGraphAccessor graph,
@@ -195,17 +205,23 @@ public class ExecutionJobVertex
         checkState(parallelismInfo.getParallelism() > 0);
         checkState(!isInitialized());
 
+        // 并行subTask数组的长度就是算子并行度
         this.taskVertices = new ExecutionVertex[parallelismInfo.getParallelism()];
-
+        // 输入中间结果
         this.inputs = new ArrayList<>(jobVertex.getInputs().size());
-
+        // 输出中间结果
         // create the intermediate results
         this.producedDataSets =
                 new IntermediateResult[jobVertex.getNumberOfProducedIntermediateDataSets()];
 
         for (int i = 0; i < jobVertex.getProducedDataSets().size(); i++) {
             final IntermediateDataSet result = jobVertex.getProducedDataSets().get(i);
-
+            /**
+             * 从jobGraph到executionGraph中间结果集就是从IntermediateDataSet变成IntermediateResult: IntermediateDataSet => IntermediateResult
+             * IntermediateResult多了分区属性: IntermediateResultPartition[] partitions
+             * IntermediateResult和ExecutionJobVertex一样实现了任务并行化。
+             * IntermediateResult任务并行化不是指producedDataSets是数组(可能有多个下游), 而是指IntermediateResult的partitions属性。
+             */
             this.producedDataSets[i] =
                     new IntermediateResult(
                             result,
@@ -214,8 +230,10 @@ public class ExecutionJobVertex
                             result.getResultType());
         }
 
+        // TODO 核心属性, 代表subTask列表
         // create all task vertices
         for (int i = 0; i < this.parallelismInfo.getParallelism(); i++) {
+            // 创建一个ExecutionVertex(subTask), 会初始化IntermediateResult
             ExecutionVertex vertex =
                     createExecutionVertex(
                             this,
@@ -511,6 +529,10 @@ public class ExecutionJobVertex
                 }
             }
 
+            /**
+             * 这里根据JobEdge中的sourceId获取到IntermediateResult
+             * 新版本没有而ExecutionEdge而是直接获取的上游的IntermediateResult
+             */
             // fetch the intermediate result via ID. if it does not exist, then it either has not
             // been created, or the order
             // in which this method is called for the job vertices is not a topological order

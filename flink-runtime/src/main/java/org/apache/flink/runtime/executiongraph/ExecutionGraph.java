@@ -54,6 +54,25 @@ import java.util.Optional;
 import java.util.concurrent.CompletableFuture;
 
 /**
+ * execution graph是协调数据流分布式执行的核心数据结构。它保留了每个并行任务、每个中间流以及它们之间的通信的表示。
+ * execution graph由以下结构组成：
+ *   ExecutionJobVertex:
+ *     表示执行过程中的来自jobGraph的一个顶点(,通常是一个operate, 例如map或则json)。
+ *     它保存所有并行子任务的聚合状态。
+ *     ExecutionJobVertex在图内由JobVertexID标识，从JobGraph的JobVertex中获取。
+ *  ExecutionVertex:
+ *    表示一个并行子任务。
+ *    对于每个ExecutionJobVertex，ExecutionVertices的数量与并行度一样多。
+ *    ExecutionVertex由ExecutionJobVertex和并行子任务的索引唯一标识。
+ *  Execution:
+ *    表示执行ExecutionVertex的一次尝试。
+ *    ExecutionVertex可能有多个执行，以防失败，或者在某些数据需要重新计算的情况下，因为在以后的操作请求时它不再可用。
+ *    执行始终由ExecutionAttemptID标识。JobManager和TaskManager之间关于任务部署和任务状态更新的所有消息始终使用ExecutionAttemptID来寻址消息接收者。
+ *
+ * ExecutionJobVertex逻辑上对应JobGraph的JobVertex。
+ * ExecutionVertex是ExecutionJobVertex的执行并行化标识, 代表一个subTask。
+ * Execution代码ExecutionVertex的一次执行, 有重试机制, 通过ExecutionAttemptId来唯一标识。
+ *
  * The execution graph is the central data structure that coordinates the distributed execution of a
  * data flow. It keeps representations of each parallel task, each intermediate stream, and the
  * communication between them.

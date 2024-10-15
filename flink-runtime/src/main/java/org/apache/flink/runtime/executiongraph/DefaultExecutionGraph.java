@@ -155,6 +155,10 @@ public class DefaultExecutionGraph implements ExecutionGraph, InternalExecutionG
     /** {@code true} if all source tasks are stoppable. */
     private boolean isStoppable = true;
 
+    /**
+     * TODO 核心属性
+     * tasks和verticesInCreationOrder都保存有ExecutionGraph的ExecutionJobVertex
+     */
     /** All job vertices that are part of this graph. */
     private final Map<JobVertexID, ExecutionJobVertex> tasks;
 
@@ -853,6 +857,11 @@ public class DefaultExecutionGraph implements ExecutionGraph, InternalExecutionG
 
         attachJobVertices(verticesToAttach, jobManagerJobMetricGroup);
         if (!isDynamic) {
+            /**
+             * 初始化executionJobVertexs:
+             *    @see ExecutionJobVertex#initialize(int, Time, long, SubtaskAttemptNumberStore): 初始化taskVertices和producedDataSets
+             *    @see ExecutionJobVertex#connectToPredecessors(Map < IntermediateDataSetID , IntermediateResult>)： 初始化inputs连接
+             */
             initializeJobVertices(verticesToAttach);
         }
 

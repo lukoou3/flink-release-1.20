@@ -37,6 +37,7 @@ import org.apache.flink.runtime.deployment.TaskDeploymentDescriptorFactory;
 import org.apache.flink.runtime.executiongraph.failover.partitionrelease.PartitionGroupReleaseStrategy;
 import org.apache.flink.runtime.executiongraph.failover.partitionrelease.PartitionGroupReleaseStrategyFactoryLoader;
 import org.apache.flink.runtime.io.network.partition.JobMasterPartitionTracker;
+import org.apache.flink.runtime.jobgraph.IntermediateDataSetID;
 import org.apache.flink.runtime.jobgraph.JobGraph;
 import org.apache.flink.runtime.jobgraph.JobType;
 import org.apache.flink.runtime.jobgraph.JobVertex;
@@ -59,6 +60,7 @@ import java.io.IOException;
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.List;
+import java.util.Map;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ScheduledExecutorService;
 import java.util.function.Supplier;
@@ -72,6 +74,15 @@ import static org.apache.flink.util.Preconditions.checkNotNull;
  */
 public class DefaultExecutionGraphBuilder {
 
+    /**
+     * 构建ExecutionGraph的核心方法:
+     * executionGraph = new DefaultExecutionGraph: 创建DefaultExecutionGraph, 就只是赋值属性, 不涉及转换
+     * @see DefaultExecutionGraph#attachJobGraph(List jobVertexs, JobManagerJobMetricGroup metricGroup): 初始化executionGraph, 核心转换在这里, 把JobVertex列表转换为ExecutionJobVertex列表
+     *   核心方法就是两个初始化方法, 初始化executionJobVertexs:
+     *    @see ExecutionJobVertex#initialize(int, Time, long, SubtaskAttemptNumberStore): 初始化taskVertices和producedDataSets
+     *    @see ExecutionJobVertex#connectToPredecessors(Map< IntermediateDataSetID , IntermediateResult>)： 初始化inputs连接
+     * return executionGraph: 返回构建的ExecutionGraph
+     */
     public static DefaultExecutionGraph buildGraph(
             JobGraph jobGraph,
             Configuration jobManagerConfig,
@@ -222,6 +233,7 @@ public class DefaultExecutionGraphBuilder {
                     jobName,
                     jobId);
         }
+        // 初始化executionGraph
         executionGraph.attachJobGraph(sortedTopology, jobManagerJobMetricGroup);
 
         if (log.isDebugEnabled()) {
@@ -229,6 +241,7 @@ public class DefaultExecutionGraphBuilder {
                     "Successfully created execution graph from job graph {} ({}).", jobName, jobId);
         }
 
+        // 现在isDynamicGraph参数都是false
         // configure the state checkpointing
         if (isDynamicGraph) {
             // dynamic graph does not support checkpointing so we skip it
@@ -347,6 +360,7 @@ public class DefaultExecutionGraphBuilder {
                     jobManagerConfig.get(STATE_CHANGE_LOG_STORAGE));
         }
 
+        // 返回构建完成的executionGraph
         return executionGraph;
     }
 
