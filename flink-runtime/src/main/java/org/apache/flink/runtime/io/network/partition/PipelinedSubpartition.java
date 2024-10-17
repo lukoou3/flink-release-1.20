@@ -180,6 +180,7 @@ public class PipelinedSubpartition extends ResultSubpartition implements Channel
                 return ADD_BUFFER_ERROR_CODE;
             }
 
+            // 添加到buffers队列
             // Add the bufferConsumer and update the stats
             if (addBuffer(bufferConsumer, partialRecordLength)) {
                 prioritySequenceNumber = sequenceNumber;
@@ -474,6 +475,7 @@ public class PipelinedSubpartition extends ResultSubpartition implements Channel
                         == bufferConsumer.getDataType()) {
                     completeTimeoutableCheckpointBarrier(bufferConsumer);
                 }
+                // 会增加底层buffer的引用
                 buffer = buildSliceBuffer(bufferConsumerWithPartialRecordLength);
 
                 checkState(
@@ -485,7 +487,11 @@ public class PipelinedSubpartition extends ResultSubpartition implements Channel
                     flushRequested = false;
                 }
 
+                /**
+                 * 当buffer用完时才poll弹出回收, 当元素少buffer没有用完时, 生产者和消费者会同时读写这个buffer
+                 */
                 if (bufferConsumer.isFinished()) {
+                    // 这里仅仅是调用一次recycleBuffer(), 底层的buffer并没有被回收
                     requireNonNull(buffers.poll()).getBufferConsumer().close();
                     decreaseBuffersInBacklogUnsafe(bufferConsumer.isBuffer());
                 }
@@ -582,6 +588,7 @@ public class PipelinedSubpartition extends ResultSubpartition implements Channel
                     getSubPartitionIndex(),
                     parent.getPartitionId());
 
+            // 通过availabilityListener构造PipelinedSubpartitionView
             readView = new PipelinedSubpartitionView(this, availabilityListener);
         }
 
@@ -749,6 +756,7 @@ public class PipelinedSubpartition extends ResultSubpartition implements Channel
 
     @GuardedBy("buffers")
     private boolean shouldNotifyDataAvailable() {
+        // 仅当第一个完成的buffer添加后通知, buffers.size() == 1 && buffer是完成的
         // Notify only when we added first finished buffer.
         return readView != null
                 && !flushRequested

@@ -26,12 +26,20 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 import static org.apache.flink.util.Preconditions.checkNotNull;
 
-/** View over a pipelined in-memory only subpartition. */
+
+/**
+ * ResultSubpartition的视图, 用来消费读取ResultSubpartition的buffer。
+ *
+ * View over a pipelined in-memory only subpartition.
+ */
 public class PipelinedSubpartitionView implements ResultSubpartitionView {
 
     /** The subpartition this view belongs to. */
-    private final PipelinedSubpartition parent;
+    private final PipelinedSubpartition parent; // 生产者
 
+    /**
+     * buffer可用监听, LocalInputChannel对应的就是LocalInputChannel本身
+     */
     private final BufferAvailabilityListener availabilityListener;
 
     /** Flag indicating whether this view has been released. */

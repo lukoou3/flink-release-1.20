@@ -19,6 +19,8 @@
 package org.apache.flink.runtime.io.network.partition;
 
 import org.apache.flink.annotation.VisibleForTesting;
+import org.apache.flink.runtime.io.network.partition.consumer.LocalInputChannel;
+import org.apache.flink.runtime.io.network.partition.consumer.SingleInputGate;
 import org.apache.flink.runtime.shuffle.DefaultShuffleMetrics;
 import org.apache.flink.runtime.shuffle.ShuffleMetrics;
 import org.apache.flink.util.CollectionUtil;
@@ -44,6 +46,7 @@ import java.util.concurrent.TimeUnit;
 import static org.apache.flink.util.Preconditions.checkState;
 
 /**
+ * ResultPartition管理器跟踪任务的当前所有生产/消耗的分区。
  * The result partition manager keeps track of all currently produced/consumed partitions of a task
  * manager.
  */
@@ -51,6 +54,7 @@ public class ResultPartitionManager implements ResultPartitionProvider {
 
     private static final Logger LOG = LoggerFactory.getLogger(ResultPartitionManager.class);
 
+    // 管理所有的ResultPartition, 相当于生产者
     private final Map<ResultPartitionID, ResultPartition> registeredPartitions =
             CollectionUtil.newHashMapWithExpectedSize(16);
 
@@ -82,6 +86,11 @@ public class ResultPartitionManager implements ResultPartitionProvider {
         }
     }
 
+    /**
+     * Task在向NetworkEnvironment注册的时候就会逐一注册所有的ResultPartition
+     * @see ResultPartition#setup()
+     * @see this#registerResultPartition
+     */
     public void registerResultPartition(ResultPartition partition) throws IOException {
         PartitionRequestListenerManager listenerManager;
         synchronized (registeredPartitions) {
@@ -106,6 +115,16 @@ public class ResultPartitionManager implements ResultPartitionProvider {
         LOG.debug("Registered {}.", partition);
     }
 
+    /**
+     * 在ResultSubpartition的指定subpartition列表中创建一个ResultSubpartitionView, 用于消费数据, BufferAvailabilityListener参数用于通知消费者有可用的数据
+     * @see SingleInputGate#requestPartitions()
+     * @see SingleInputGate#internalRequestPartitions()
+     * @see LocalInputChannel#requestSubpartitions()
+     * @see this#createSubpartitionView
+     * @see PipelinedSubpartition#createReadView(BufferAvailabilityListener)
+     * @see PipelinedSubpartitionView#PipelinedSubpartitionView(PipelinedSubpartition, BufferAvailabilityListener): PipelinedSubpartitionView的构造函数
+     *
+     */
     @Override
     public ResultSubpartitionView createSubpartitionView(
             ResultPartitionID partitionId,

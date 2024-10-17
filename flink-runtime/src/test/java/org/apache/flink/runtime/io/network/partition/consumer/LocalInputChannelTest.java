@@ -18,6 +18,7 @@
 
 package org.apache.flink.runtime.io.network.partition.consumer;
 
+import org.apache.flink.api.java.tuple.Tuple2;
 import org.apache.flink.runtime.checkpoint.CheckpointOptions;
 import org.apache.flink.runtime.checkpoint.CheckpointType;
 import org.apache.flink.runtime.checkpoint.channel.RecordingChannelStateWriter;
@@ -59,6 +60,7 @@ import org.junit.jupiter.api.Test;
 import org.mockito.stubbing.Answer;
 
 import java.io.IOException;
+import java.util.Arrays;
 import java.util.Collections;
 import java.util.List;
 import java.util.Optional;
@@ -125,6 +127,157 @@ class LocalInputChannelTest {
     }
 
     /**
+     * TODO 这个示例能清晰的说明同一个TaskManager内task的数据是如何交互的
+     * 通过input channel测试多个subpartition的消费情况。
+     * 多个生产任务生成PipelinedResultPartition，这些分区由多个消费任务通过LocalInputChannel消费。
+     *
+     */
+    @Test
+    void testSimpleConcurrentConsumeMultiplePartitions() throws Exception {
+        // Config
+        final int parallelism = 2;
+        final int producerBufferPoolSize = parallelism + 1;
+        final int numberOfBuffersPerChannel = 8; // 32
+        /**
+         * 可以只查看初始化, 看看LocalInputChannel和上游的ResultSubpartition是怎么创建ResultSubpartitionView连接的
+         *
+         */
+        final boolean onlyTestInit = false; // true/false,
+
+        // Setup
+        // One thread per produced partition and one per consumer
+        final ExecutorService executor = Executors.newFixedThreadPool(2 * parallelism);
+
+        final NetworkBufferPool networkBuffers =
+                new NetworkBufferPool(
+                        (parallelism * producerBufferPoolSize) + (parallelism * parallelism),
+                        TestBufferFactory.BUFFER_SIZE);
+
+        final ResultPartitionManager partitionManager = new ResultPartitionManager();
+
+        final ResultPartitionID[] partitionIds = new ResultPartitionID[parallelism];
+        final ResultPartition[] partitions = new ResultPartition[parallelism];
+        final TestPartitionProducer[] partitionProducers = new TestPartitionProducer[parallelism];
+
+        // Create all partitions
+        for (int i = 0; i < parallelism; i++) {
+            partitionIds[i] = new ResultPartitionID();
+
+            final ResultPartition partition =
+                    new ResultPartitionBuilder()
+                            .setResultPartitionId(partitionIds[i])
+                            .setNumberOfSubpartitions(parallelism)
+                            .setNumTargetKeyGroups(parallelism)
+                            .setResultPartitionManager(partitionManager)
+                            .setBufferPoolFactory(
+                                    () ->
+                                            networkBuffers.createBufferPool(
+                                                    producerBufferPoolSize,
+                                                    producerBufferPoolSize,
+                                                    parallelism,
+                                                    Integer.MAX_VALUE,
+                                                    0))
+                            .build();
+            partitions[i] = partition;
+
+            // Create a buffer pool for this partition
+            partition.setup();
+
+            // Create the producer
+            partitionProducers[i] =
+                    new TestPartitionProducer(
+                            (BufferWritingResultPartition) partition,
+                            false,
+                            new TestPartitionProducerBufferSource(
+                                    parallelism,
+                                    TestBufferFactory.BUFFER_SIZE,
+                                    numberOfBuffersPerChannel));
+        }
+
+        final TestLocalInputChannelConsumer[] localInputChannelConsumers = new TestLocalInputChannelConsumer[parallelism];
+
+        // Test
+        try {
+            // Submit producer tasks
+            List<CompletableFuture<?>> results = Lists.newArrayListWithCapacity(parallelism + 1);
+            Thread[] threads = new Thread[parallelism];
+
+            for (int i = 0; i < parallelism; i++) {
+                if (onlyTestInit) {
+                    continue;
+                }
+                results.add(
+                        CompletableFuture.supplyAsync(
+                                CheckedSupplier.unchecked(partitionProducers[i]::call), executor));
+            }
+
+            // Submit consumer
+            for (int i = 0; i < parallelism; i++) {
+                final TestLocalInputChannelConsumer consumer =
+                        new TestLocalInputChannelConsumer(
+                                i,
+                                parallelism,
+                                numberOfBuffersPerChannel,
+                                networkBuffers.createBufferPool(parallelism, parallelism),
+                                partitionManager,
+                                new TaskEventDispatcher(),
+                                partitionIds);
+                localInputChannelConsumers[i] = consumer;
+
+                if (onlyTestInit) {
+                    continue;
+                }
+                /*results.add(
+                        CompletableFuture.supplyAsync(
+                                CheckedSupplier.unchecked(consumer::call), executor));*/
+
+                threads[i] = new Thread(() -> {
+                    try {
+                        consumer.call();
+                    } catch (Exception e) {
+                        throw new RuntimeException(e);
+                    }
+                }, "consumer-" + i);
+                threads[i].start();
+            }
+
+            if (onlyTestInit) {
+                final InputChannel[][] inputChannelsArray = new InputChannel[parallelism][];
+                final ResultSubpartition[][] subpartitionsArray = Arrays.stream(partitions).map(x -> ((BufferWritingResultPartition)x).getAllPartitions()).toArray(ResultSubpartition[][]::new);
+                final ResultSubpartitionView[][] subpartitionViewsArray = new ResultSubpartitionView[parallelism][];
+                final Tuple2<ResultPartitionID, ResultSubpartitionIndexSet>[][] partitionIDAndSubpartitionIdxSetsArray = new Tuple2[parallelism][];
+                for (int i = 0; i < localInputChannelConsumers.length; i++) {
+                    inputChannelsArray[i] = localInputChannelConsumers[i].inputChannels;
+                    subpartitionViewsArray[i] = Arrays.stream(localInputChannelConsumers[i].inputChannels).map(x -> ((LocalInputChannel)x).getSubpartitionView()).toArray(ResultSubpartitionView[]::new);
+                    partitionIDAndSubpartitionIdxSetsArray[i] = Arrays.stream(localInputChannelConsumers[i].inputChannels).map(x -> (LocalInputChannel)x).map(x -> Tuple2.of(x.partitionId, x.consumedSubpartitionIndexSet)).toArray(Tuple2[]::new);
+                }
+                /**
+                 * 上下游连接关系的查看就看subpartitionsArray和subpartitionViewsArray
+                 */
+                System.out.println(partitions);
+                System.out.println(partitionIDAndSubpartitionIdxSetsArray);
+                System.out.println(subpartitionsArray);
+                System.out.println(subpartitionViewsArray);
+                System.out.println(inputChannelsArray);
+                System.out.println(localInputChannelConsumers);
+            }
+
+            FutureUtils.waitForAll(results).get();
+            for (Thread thread : threads) {
+                thread.join();
+            }
+        } finally {
+            networkBuffers.destroyAllBufferPools();
+            networkBuffers.destroy();
+            executor.shutdown();
+        }
+    }
+
+    /**
+     * TODO 这个示例能清晰的说明同一个TaskManager内task的数据是如何交互的
+     *
+     * 通过input channel测试多个subpartition的消费情况。
+     * 多个生产任务生成PipelinedResultPartition，这些分区由多个消费任务通过LocalInputChannel消费。
      * Tests the consumption of multiple subpartitions via local input channels.
      *
      * <p>Multiple producer tasks produce pipelined partitions, which are consumed by multiple tasks
@@ -670,6 +823,7 @@ class LocalInputChannelTest {
     private static class TestPartitionProducerBufferSource implements TestProducerSource {
 
         private final int bufferSize;
+        private final int numberOfBuffersToProduce;
 
         private final List<Byte> channelIndexes;
 
@@ -677,6 +831,7 @@ class LocalInputChannelTest {
                 int parallelism, int bufferSize, int numberOfBuffersToProduce) {
 
             this.bufferSize = bufferSize;
+            this.numberOfBuffersToProduce = numberOfBuffersToProduce;
             this.channelIndexes =
                     Lists.newArrayListWithCapacity(parallelism * numberOfBuffersToProduce);
 
@@ -694,8 +849,12 @@ class LocalInputChannelTest {
         @Override
         public BufferAndChannel getNextBuffer() throws Exception {
             if (channelIndexes.size() > 0) {
+                Thread.sleep(20000);
                 final int channelIndex = channelIndexes.remove(0);
                 return new BufferAndChannel(new byte[bufferSize], channelIndex);
+            }
+            if (numberOfBuffersToProduce == 0){
+                Thread.sleep(300000);
             }
 
             return null;
@@ -708,7 +867,8 @@ class LocalInputChannelTest {
      */
     private static class TestLocalInputChannelConsumer implements Callable<Void> {
 
-        private final SingleInputGate inputGate;
+        public final SingleInputGate inputGate;
+        public final InputChannel[] inputChannels;
 
         private final int numberOfInputChannels;
 
@@ -725,14 +885,14 @@ class LocalInputChannelTest {
                 throws IOException {
 
             checkArgument(numberOfInputChannels >= 1);
-            checkArgument(numberOfExpectedBuffersPerChannel >= 1);
+            checkArgument(numberOfExpectedBuffersPerChannel >= 0);
 
             this.inputGate =
                     new SingleInputGateBuilder()
                             .setNumberOfChannels(numberOfInputChannels)
                             .setBufferPoolFactory(bufferPool)
                             .build();
-            InputChannel[] inputChannels = new InputChannel[numberOfInputChannels];
+            this.inputChannels = new InputChannel[numberOfInputChannels];
 
             // Setup input channels
             for (int i = 0; i < numberOfInputChannels; i++) {
@@ -762,7 +922,7 @@ class LocalInputChannelTest {
                 Optional<BufferOrEvent> boe;
                 while ((boe = inputGate.getNext()).isPresent()) {
                     if (boe.get().isBuffer()) {
-                        boe.get().getBuffer().recycleBuffer();
+                        boe.get().getBuffer().recycleBuffer(); // 放回LocalBufferPool
 
                         // Check that we don't receive too many buffers
                         if (++numberOfBuffersPerChannel[

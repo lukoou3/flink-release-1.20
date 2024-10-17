@@ -330,6 +330,9 @@ public abstract class BufferWritingResultPartition extends ResultPartition {
             int partialRecordLength,
             int minDesirableBufferSize)
             throws IOException {
+        /**
+         *  buffer.createBufferConsumerFromBeginning(): 添加BufferConsumer
+         */
         int desirableBufferSize =
                 subpartitions[targetSubpartition].add(
                         buffer.createBufferConsumerFromBeginning(), partialRecordLength);
@@ -434,6 +437,9 @@ public abstract class BufferWritingResultPartition extends ResultPartition {
 
     private BufferBuilder requestNewBufferBuilderFromPool(int targetSubpartition)
             throws IOException {
+        /**
+         * 申请Buffer内存
+         */
         BufferBuilder bufferBuilder = bufferPool.requestBufferBuilder(targetSubpartition);
         if (bufferBuilder != null) {
             return bufferBuilder;

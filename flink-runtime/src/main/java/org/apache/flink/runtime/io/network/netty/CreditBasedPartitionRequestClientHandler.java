@@ -358,6 +358,7 @@ class CreditBasedPartitionRequestClientHandler extends ChannelInboundHandlerAdap
         if (bufferOrEvent.isBuffer() && bufferOrEvent.bufferSize == 0) {
             inputChannel.onEmptyBuffer(bufferOrEvent.sequenceNumber, bufferOrEvent.backlog);
         } else if (bufferOrEvent.getBuffer() != null) {
+            // 从TaskManager收到buffer
             inputChannel.onBuffer(
                     bufferOrEvent.getBuffer(),
                     bufferOrEvent.sequenceNumber,

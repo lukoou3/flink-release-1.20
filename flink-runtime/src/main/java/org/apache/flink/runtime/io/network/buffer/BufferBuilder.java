@@ -74,6 +74,7 @@ public class BufferBuilder implements AutoCloseable {
         checkState(
                 !bufferConsumerCreated, "Two BufferConsumer shouldn't exist for one BufferBuilder");
         bufferConsumerCreated = true;
+        // buffer.retainBuffer()增加引用, positionMarker传入
         return new BufferConsumer(buffer.retainBuffer(), positionMarker, currentReaderPosition);
     }
 
@@ -107,6 +108,7 @@ public class BufferBuilder implements AutoCloseable {
         int available = getMaxCapacity() - positionMarker.getCached();
         int toCopy = Math.min(needed, available);
 
+        // 使用的positionMarker标记位置, 多次写入肯定有写完的时候
         memorySegment.put(positionMarker.getCached(), source, toCopy);
         positionMarker.move(toCopy);
         return toCopy;
@@ -195,6 +197,10 @@ public class BufferBuilder implements AutoCloseable {
     }
 
     /**
+     * PositionMarker的缓存写入实现。
+     * 写入器（BufferBuilder）和读取器（BufferConsumer）缓存必须彼此独立实现，这样缓存的值就不会意外地从一个泄漏到另一个。
+     * 记得提交BufferBuilder。SettablePositionMarker使更改可见。
+     *
      * Cached writing implementation of {@link PositionMarker}.
      *
      * <p>Writer ({@link BufferBuilder}) and reader ({@link BufferConsumer}) caches must be
@@ -207,6 +213,7 @@ public class BufferBuilder implements AutoCloseable {
         private volatile int position = 0;
 
         /**
+         * 本地缓存volatile位置的值，以避免不必要的volatile访问。
          * Locally cached value of volatile {@code position} to avoid unnecessary volatile accesses.
          */
         private int cachedPosition = 0;

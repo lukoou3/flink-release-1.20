@@ -34,13 +34,19 @@ import org.apache.flink.runtime.io.network.api.RecoveryMetadata;
 import org.apache.flink.runtime.io.network.api.StopMode;
 import org.apache.flink.runtime.io.network.api.serialization.EventSerializer;
 import org.apache.flink.runtime.io.network.buffer.Buffer;
+import org.apache.flink.runtime.io.network.buffer.BufferBuilder;
+import org.apache.flink.runtime.io.network.buffer.BufferConsumer;
 import org.apache.flink.runtime.io.network.buffer.BufferDecompressor;
 import org.apache.flink.runtime.io.network.buffer.BufferPool;
 import org.apache.flink.runtime.io.network.buffer.BufferProvider;
+import org.apache.flink.runtime.io.network.partition.BufferWritingResultPartition;
 import org.apache.flink.runtime.io.network.partition.PartitionProducerStateProvider;
+import org.apache.flink.runtime.io.network.partition.PipelinedSubpartition;
+import org.apache.flink.runtime.io.network.partition.PipelinedSubpartitionView;
 import org.apache.flink.runtime.io.network.partition.PrioritizedDeque;
 import org.apache.flink.runtime.io.network.partition.ResultPartitionID;
 import org.apache.flink.runtime.io.network.partition.ResultPartitionType;
+import org.apache.flink.runtime.io.network.partition.ResultSubpartitionView;
 import org.apache.flink.runtime.io.network.partition.consumer.InputChannel.BufferAndAvailability;
 import org.apache.flink.runtime.io.network.partition.hybrid.tiered.common.TieredStorageIdMappingUtils;
 import org.apache.flink.runtime.io.network.partition.hybrid.tiered.common.TieredStorageInputChannelId;
@@ -66,6 +72,7 @@ import javax.annotation.Nullable;
 import javax.annotation.concurrent.GuardedBy;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.time.Duration;
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -86,6 +93,7 @@ import static org.apache.flink.util.Preconditions.checkNotNull;
 import static org.apache.flink.util.Preconditions.checkState;
 
 /**
+ * SingleInputGate用于从上游拉取下游任务对应分区的数据, 类似mapreduce任务单个reduce任务从所有map任务拉取对应分区的数据
  * An input gate consumes one or more partitions of a single produced intermediate result.
  *
  * <p>Each intermediate result is partitioned over its producing parallel subtasks; each of these
@@ -154,10 +162,16 @@ public class SingleInputGate extends IndexedInputGate {
     private final Map<IntermediateResultPartitionID, Map<InputChannelInfo, InputChannel>>
             inputChannels;
 
+    // 上游每个map任务对应一个InputChannel
     @GuardedBy("requestLock")
     private final InputChannel[] channels;
 
-    /** Channels, which notified this input gate about available data. */
+
+    /**
+     * 有数据的InputChannel
+     *
+     * Channels, which notified this input gate about available data.
+     */
     private final PrioritizedDeque<InputChannel> inputChannelsWithData = new PrioritizedDeque<>();
 
     /**
@@ -809,11 +823,17 @@ public class SingleInputGate extends IndexedInputGate {
     // Consume
     // ------------------------------------------------------------------------
 
+    /**
+     * 阻塞拉取数据
+     */
     @Override
     public Optional<BufferOrEvent> getNext() throws IOException, InterruptedException {
         return getNextBufferOrEvent(true);
     }
 
+    /**
+     * 非阻塞拉取数据
+     */
     @Override
     public Optional<BufferOrEvent> pollNext() throws IOException, InterruptedException {
         return getNextBufferOrEvent(false);
@@ -828,6 +848,7 @@ public class SingleInputGate extends IndexedInputGate {
         if (closeFuture.isDone()) {
             throw new CancelTaskException("Input gate is already closed.");
         }
+        // 获取数据
         Optional<InputWithData<InputChannel, Buffer>> next = waitAndGetNextData(blocking);
         if (!next.isPresent()) {
             throughputCalculator.pauseMeasurement();
@@ -1013,7 +1034,7 @@ public class SingleInputGate extends IndexedInputGate {
         assert Thread.holdsLock(inputChannelsWithData);
 
         if (inputChannelsWithData.isEmpty()) {
-            availabilityHelper.resetUnavailable();
+            availabilityHelper.resetUnavailable(); // 设置没有可用的数据
         }
     }
 
@@ -1205,6 +1226,7 @@ public class SingleInputGate extends IndexedInputGate {
 
     private void queueChannel(
             InputChannel channel, @Nullable Integer prioritySequenceNumber, boolean forcePriority) {
+        // 把inputChannelsWithData传入GateNotificationHelper, 下面调用GateNotificationHelper.notifyDataAvailable()会调用inputChannelsWithData.notifyAll()
         try (GateNotificationHelper notification =
                 new GateNotificationHelper(this, inputChannelsWithData)) {
             synchronized (inputChannelsWithData) {
@@ -1229,6 +1251,10 @@ public class SingleInputGate extends IndexedInputGate {
                     notification.notifyPriority();
                 }
                 if (inputChannelsWithData.size() == 1) {
+                    /**
+                     * 调用inputChannelsWithData.notifyAll(), 使inputChannelsWithData.wait()阻塞恢复
+                     * @see SingleInputGate#getChannel(boolean): 恢复这里的等待inputChannelsWithData.wait()
+                     */
                     notification.notifyDataAvailable();
                 }
             }
@@ -1272,6 +1298,32 @@ public class SingleInputGate extends IndexedInputGate {
         return true;
     }
 
+    /**
+     * task消费者InputGate获取有可读数据的InputChannel。
+     * reducer task读取buffer：
+     * @see SingleInputGate#pollNext()
+     * @see SingleInputGate#waitAndGetNextData(boolean)
+     * @see SingleInputGate#waitAndGetNextData(boolean)
+     * @see SingleInputGate#getChannel(boolean): 获取有数据的InputChannel
+     *   inputChannelsWithData.wait(): inputChannelsWithData队列为空, 阻塞等待
+     *   inputChannel = inputChannelsWithData.poll(): 返回有数据的InputChannel
+     * map task生成buffer, 通知：
+     * @see BufferWritingResultPartition#emitRecord(ByteBuffer, int): 把record写入目标subpartition
+     * @see BufferWritingResultPartition#appendUnicastDataForNewRecord(ByteBuffer, int)
+     *   buffer.createBufferConsumerFromBeginning(): 添加BufferConsumer
+     * @see BufferWritingResultPartition#addToSubpartition(BufferBuilder, int, int, int)
+     * @see PipelinedSubpartition#add(BufferConsumer, int)
+     * @see PipelinedSubpartition#add(BufferConsumer, int, boolean)
+     * @see PipelinedSubpartition#notifyDataAvailable(): 通知view可以消费
+     * @see PipelinedSubpartitionView#notifyDataAvailable()
+     * @see LocalInputChannel#notifyDataAvailable(ResultSubpartitionView)
+     * @see SingleInputGate#notifyChannelNonEmpty(InputChannel)
+     * @see SingleInputGate#queueChannel(InputChannel, Integer, boolean)
+     * @see SingleInputGate#queueChannelUnsafe(InputChannel, boolean)
+     *   inputChannelsWithData.add(channel, priority, alreadyEnqueued): channel加入inputChannelsWithData
+     * notification.notifyDataAvailable(): inputChannelsWithData.notifyAll(), 通知
+     *
+     */
     private Optional<InputChannel> getChannel(boolean blocking) throws InterruptedException {
         assert Thread.holdsLock(inputChannelsWithData);
 
@@ -1281,6 +1333,9 @@ public class SingleInputGate extends IndexedInputGate {
             }
 
             if (blocking) {
+                /**
+                 * 阻塞模式下等待数据可用
+                 */
                 inputChannelsWithData.wait();
             } else {
                 availabilityHelper.resetUnavailable();

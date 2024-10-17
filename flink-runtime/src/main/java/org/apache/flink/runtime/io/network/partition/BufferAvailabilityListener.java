@@ -19,6 +19,7 @@
 package org.apache.flink.runtime.io.network.partition;
 
 /**
+ * 由ResultSubpartitionView的消费者实现的Listener接口，这些消费者希望收到更多缓冲区可用性的通知。
  * Listener interface implemented by consumers of {@link ResultSubpartitionView} that want to be
  * notified of availability of further buffers.
  */

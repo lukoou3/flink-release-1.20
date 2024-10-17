@@ -389,6 +389,7 @@ public class LocalBufferPool implements BufferPool {
         return segment;
     }
 
+
     @Nullable
     private MemorySegment requestMemorySegment(int targetChannel) {
         MemorySegment segment = null;
@@ -398,6 +399,7 @@ public class LocalBufferPool implements BufferPool {
             if (!availableMemorySegments.isEmpty()) {
                 segment = availableMemorySegments.poll();
             } else if (isRequestedSizeReached()) {
+                // networkBufferPool.requestPooledMemorySegment()
                 // Only when the buffer request reaches the upper limit(i.e. current pool size),
                 // requests an overdraft buffer.
                 segment = requestOverdraftMemorySegmentFromGlobal();

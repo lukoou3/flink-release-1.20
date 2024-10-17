@@ -92,7 +92,7 @@ public class SpillingAdaptiveSpanningRecordDeserializer<T extends IOReadableWrit
 
         final DeserializationResult result = readNextRecord(target);
         if (result.isBufferConsumed()) {
-            currentBuffer.recycleBuffer();
+            currentBuffer.recycleBuffer(); // 释放, 引用减少
             currentBuffer = null;
         }
         return result;

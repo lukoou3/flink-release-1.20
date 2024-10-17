@@ -156,6 +156,9 @@ public class NetworkBuffer extends AbstractReferenceCountedByteBuf implements Bu
         this.recycler = bufferRecycler;
     }
 
+    /**
+     * 放回LocalBufferPool
+     */
     @Override
     public void recycleBuffer() {
         release();

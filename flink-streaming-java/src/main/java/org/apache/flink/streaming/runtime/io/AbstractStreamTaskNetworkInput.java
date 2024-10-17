@@ -100,6 +100,7 @@ public abstract class AbstractStreamTaskNetworkInput<
             if (currentRecordDeserializer != null) {
                 RecordDeserializer.DeserializationResult result;
                 try {
+                    // 从currentRecordDeserializer当前的buffer读取record
                     result = currentRecordDeserializer.getNextRecord(deserializationDelegate);
                 } catch (IOException e) {
                     throw new IOException(
@@ -119,12 +120,18 @@ public abstract class AbstractStreamTaskNetworkInput<
                 }
             }
 
+            /**
+             * 获取一个buffer, 一个buffer包含多条record
+             */
             Optional<BufferOrEvent> bufferOrEvent = checkpointedInputGate.pollNext();
             if (bufferOrEvent.isPresent()) {
                 // return to the mailbox after receiving a checkpoint barrier to avoid processing of
                 // data after the barrier before checkpoint is performed for unaligned checkpoint
                 // mode
                 if (bufferOrEvent.get().isBuffer()) {
+                    /**
+                     * currentRecordDeserializer.setNextBuffer(bufferOrEvent.getBuffer())
+                     */
                     processBuffer(bufferOrEvent.get());
                 } else {
                     DataInputStatus status = processEvent(bufferOrEvent.get());
