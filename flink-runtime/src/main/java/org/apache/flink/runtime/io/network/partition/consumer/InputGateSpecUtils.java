@@ -54,6 +54,11 @@ public class InputGateSpecUtils {
         int requiredBuffersPerGate =
                 Math.min(maxRequiredBuffersThresholdPerGate, targetRequiredBuffersPerGate);
 
+        /**
+         * configuredNetworkBuffersPerChannel = taskmanager.network.memory.buffers-per-channel = 2
+         * targetRequiredBuffersPerGate = numInputChannels * configuredNetworkBuffersPerChannel + 1
+         * effectiveExclusiveBuffersPerChannel 似乎基本等于2
+         */
         int effectiveExclusiveBuffersPerChannel =
                 getExclusiveBuffersPerChannel(
                         configuredNetworkBuffersPerChannel,

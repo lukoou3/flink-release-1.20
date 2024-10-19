@@ -33,6 +33,9 @@ import org.apache.flink.runtime.io.network.partition.consumer.InputChannel.Buffe
 import org.apache.flink.runtime.io.network.partition.consumer.InputChannelID;
 import org.apache.flink.runtime.io.network.partition.consumer.LocalInputChannel;
 
+import org.apache.flink.shaded.netty4.io.netty.channel.Channel;
+import org.apache.flink.shaded.netty4.io.netty.channel.ChannelHandlerContext;
+
 import javax.annotation.Nullable;
 
 import java.io.IOException;
@@ -42,6 +45,11 @@ import static org.apache.flink.util.Preconditions.checkArgument;
 import static org.apache.flink.util.Preconditions.checkState;
 
 /**
+ * 基于网路信用模式, 对ResultSubpartitionView简单包装。
+ * 和LocalInputChannel一样实现了BufferAvailabilityListener接口, 用于感知数据可用, 然后发送数据为下游
+ *
+ * 它还跟踪可用缓冲区，并通知出站处理程序非空，类似于LocalInputChannel。
+ *
  * Simple wrapper for the subpartition view used in the new network credit-based mode.
  *
  * <p>It also keeps track of available buffers and notifies the outbound handler about
@@ -104,6 +112,7 @@ class CreditBasedSequenceNumberingViewReader
             partitionRequestListener =
                     new NettyPartitionRequestListener(
                             partitionProvider, this, subpartitionIndexSet, resultPartitionId);
+            // 创建subpartitionView
             // The partition provider will create subpartitionView if resultPartition is
             // registered, otherwise it will register a listener of partition request to the result
             // partition manager.
@@ -260,6 +269,7 @@ class CreditBasedSequenceNumberingViewReader
             }
 
             final Buffer.DataType nextDataType = getNextDataType(next);
+            // BufferAndBacklog => BufferAndAvailability
             return new BufferAndAvailability(
                     next.buffer(), nextDataType, next.buffersInBacklog(), next.getSequenceNumber());
         } else {
@@ -290,6 +300,16 @@ class CreditBasedSequenceNumberingViewReader
         subpartitionView.releaseAllResources();
     }
 
+    /**
+     * 通知ResultSubpartitionView有数据可用
+     * @see PartitionRequestQueue#notifyReaderNonEmpty(NetworkSequenceViewReader): 触发netty：ctx.pipeline().fireUserEventTriggered(reader)
+     * @see PartitionRequestQueue#userEventTriggered(ChannelHandlerContext, Object)
+     * @see PartitionRequestQueue#enqueueAvailableReader(NetworkSequenceViewReader): 可用reader放入队列
+     * 给消费者发送buffer
+     * @see PartitionRequestQueue#channelWritabilityChanged(ChannelHandlerContext): 有数据可写触发
+     * @see PartitionRequestQueue#writeAndFlushNextMessageIfPossible(Channel): 给下游发送buffer响应
+     *
+     */
     @Override
     public void notifyDataAvailable(ResultSubpartitionView view) {
         requestQueue.notifyReaderNonEmpty(this);

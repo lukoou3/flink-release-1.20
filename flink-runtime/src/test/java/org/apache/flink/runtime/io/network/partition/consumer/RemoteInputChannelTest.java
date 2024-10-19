@@ -1849,23 +1849,28 @@ class RemoteInputChannelTest {
 
         final Buffer buffer = createBuffer(TestBufferFactory.BUFFER_SIZE);
 
+        // 收到buffer和backlog的响应
         // Receiving the buffer with backlog.
         remoteInputChannel.onBuffer(buffer.retainBuffer(), 0, 1, 0);
         // 1 buffer + 1 backlog.
         assertThat(remoteInputChannel.getBuffersInUseCount()).isEqualTo(2);
 
+        // 收到buffer和backlog的响应
         remoteInputChannel.onBuffer(buffer.retainBuffer(), 1, 3, 0);
         // 2 buffer + 3 backlog.
         assertThat(remoteInputChannel.getBuffersInUseCount()).isEqualTo(5);
 
+        // 消费一个buffer
         // 1 buffer + 3 backlog.
         remoteInputChannel.getNextBuffer();
         assertThat(remoteInputChannel.getBuffersInUseCount()).isEqualTo(4);
 
+        // 消费一个buffer
         // 0 buffer + 3 backlog.
         remoteInputChannel.getNextBuffer();
         assertThat(remoteInputChannel.getBuffersInUseCount()).isEqualTo(3);
 
+        // 消费buffer为empty, 因为没有新收到buffer
         // 0 buffer + 3 backlog. Nothing changes from previous case because receivedBuffers was
         // already empty.
         remoteInputChannel.getNextBuffer();

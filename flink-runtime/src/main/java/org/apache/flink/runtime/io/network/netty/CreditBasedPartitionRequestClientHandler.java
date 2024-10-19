@@ -275,6 +275,7 @@ class CreditBasedPartitionRequestClientHandler extends ChannelInboundHandlerAdap
         final Class<?> msgClazz = msg.getClass();
 
         // ---- Buffer --------------------------------------------------------
+        // 从TaskManager收到buffer
         if (msgClazz == NettyMessage.BufferResponse.class) {
             NettyMessage.BufferResponse bufferOrEvent = (NettyMessage.BufferResponse) msg;
 
@@ -360,9 +361,9 @@ class CreditBasedPartitionRequestClientHandler extends ChannelInboundHandlerAdap
         } else if (bufferOrEvent.getBuffer() != null) {
             // 从TaskManager收到buffer
             inputChannel.onBuffer(
-                    bufferOrEvent.getBuffer(),
+                    bufferOrEvent.getBuffer(), // 数据buffer
                     bufferOrEvent.sequenceNumber,
-                    bufferOrEvent.backlog,
+                    bufferOrEvent.backlog, // 服务端积压的buffer数
                     bufferOrEvent.subpartitionId);
         } else {
             throw new IllegalStateException(

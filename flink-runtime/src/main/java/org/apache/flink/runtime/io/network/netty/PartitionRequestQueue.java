@@ -288,6 +288,7 @@ class PartitionRequestQueue extends ChannelInboundHandlerAdapter {
         }
     }
 
+    // 有数据可写
     @Override
     public void channelWritabilityChanged(ChannelHandlerContext ctx) throws Exception {
         writeAndFlushNextMessageIfPossible(ctx.channel());
@@ -306,6 +307,7 @@ class PartitionRequestQueue extends ChannelInboundHandlerAdapter {
         int nextSubpartitionId = -1;
         try {
             while (true) {
+                // 获取有数据的NetworkSequenceViewReader
                 NetworkSequenceViewReader reader = pollAvailableReader();
 
                 // No queue with available data. We allow this here, because
@@ -315,6 +317,7 @@ class PartitionRequestQueue extends ChannelInboundHandlerAdapter {
                 }
 
                 nextSubpartitionId = reader.peekNextBufferSubpartitionId();
+                // 获取BufferAndAvailability
                 next = reader.getNextBuffer();
                 if (next == null) {
                     if (!reader.isReleased()) {
@@ -334,6 +337,7 @@ class PartitionRequestQueue extends ChannelInboundHandlerAdapter {
                         registerAvailableReader(reader);
                     }
 
+                    // 给下游发送buffer响应
                     BufferResponse msg =
                             new BufferResponse(
                                     next.buffer(),

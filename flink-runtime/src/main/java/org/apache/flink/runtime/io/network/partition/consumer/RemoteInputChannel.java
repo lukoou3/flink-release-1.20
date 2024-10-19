@@ -19,6 +19,7 @@
 package org.apache.flink.runtime.io.network.partition.consumer;
 
 import org.apache.flink.annotation.VisibleForTesting;
+import org.apache.flink.configuration.NettyShuffleEnvironmentOptions;
 import org.apache.flink.core.memory.MemorySegment;
 import org.apache.flink.core.memory.MemorySegmentFactory;
 import org.apache.flink.metrics.Counter;
@@ -30,6 +31,7 @@ import org.apache.flink.runtime.event.TaskEvent;
 import org.apache.flink.runtime.execution.CancelTaskException;
 import org.apache.flink.runtime.io.network.ConnectionID;
 import org.apache.flink.runtime.io.network.ConnectionManager;
+import org.apache.flink.runtime.io.network.NetworkSequenceViewReader;
 import org.apache.flink.runtime.io.network.PartitionRequestClient;
 import org.apache.flink.runtime.io.network.api.CheckpointBarrier;
 import org.apache.flink.runtime.io.network.api.EventAnnouncement;
@@ -41,10 +43,18 @@ import org.apache.flink.runtime.io.network.buffer.BufferProvider;
 import org.apache.flink.runtime.io.network.buffer.FreeingBufferRecycler;
 import org.apache.flink.runtime.io.network.buffer.NetworkBuffer;
 import org.apache.flink.runtime.io.network.logger.NetworkActionsLogger;
+import org.apache.flink.runtime.io.network.netty.NettyMessage;
+import org.apache.flink.runtime.io.network.netty.NettyPartitionRequestClient;
 import org.apache.flink.runtime.io.network.partition.PartitionNotFoundException;
 import org.apache.flink.runtime.io.network.partition.PrioritizedDeque;
 import org.apache.flink.runtime.io.network.partition.ResultPartitionID;
 import org.apache.flink.runtime.io.network.partition.ResultSubpartitionIndexSet;
+
+import org.apache.flink.runtime.io.network.partition.ResultSubpartitionView;
+
+import org.apache.flink.shaded.netty4.io.netty.channel.Channel;
+import org.apache.flink.shaded.netty4.io.netty.channel.ChannelHandlerContext;
+
 import org.apache.flink.util.ExceptionUtils;
 
 import org.apache.flink.shaded.guava31.com.google.common.collect.Iterators;
@@ -101,16 +111,26 @@ public class RemoteInputChannel extends InputChannel {
     /** Client to establish a (possibly shared) TCP connection and request the partition. */
     private volatile PartitionRequestClient partitionRequestClient;
 
-    /** The next expected sequence number for the next buffer. */
+    /**
+     * 下次期望接收buffer的sequence编号, 收到一个就递增, 用于验证
+     * The next expected sequence number for the next buffer.
+     */
     private int expectedSequenceNumber = 0;
 
-    /** The initial number of exclusive buffers assigned to this channel. */
+    /**
+     * 分配给这个InputChannel独占的buffer数量, 也就是这个channel初始的信用, 似乎基本等于2
+     * @see NettyShuffleEnvironmentOptions#NETWORK_BUFFERS_PER_CHANNEL
+     * The initial number of exclusive buffers assigned to this channel.
+     */
     private final int initialCredit;
 
     /** The milliseconds timeout for partition request listener in result partition manager. */
     private final int partitionRequestListenerTimeout;
 
-    /** The number of available buffers that have not been announced to the producer yet. */
+    /**
+     * 尚未通知服务端的可用的buffers
+     * The number of available buffers that have not been announced to the producer yet.
+     */
     private final AtomicInteger unannouncedCredit = new AtomicInteger(0);
 
     private final BufferManager bufferManager;
@@ -149,6 +169,10 @@ public class RemoteInputChannel extends InputChannel {
                 maxBackoff,
                 numBytesIn,
                 numBuffersIn);
+        /**
+         * networkBuffersPerChannel似乎基本等于2
+         * @see InputGateSpecUtils#createGateBuffersSpec
+         */
         checkArgument(networkBuffersPerChannel >= 0, "Must be non-negative.");
 
         this.partitionRequestListenerTimeout = partitionRequestListenerTimeout;
@@ -181,7 +205,37 @@ public class RemoteInputChannel extends InputChannel {
     // Consume
     // ------------------------------------------------------------------------
 
-    /** Requests a remote subpartition. */
+    /**
+     * 请求远程的subpartition。
+     *   创建partitionRequestClient
+     *   向远程发送PartitionRequest请求, PartitionRequest包含channel的partitionId, consumedSubpartitionIndexSet, initialCredit信息
+     *   initialCredit参数用于实现反压
+     *   @see NettyPartitionRequestClient#requestSubpartition(ResultPartitionID, ResultSubpartitionIndexSet, RemoteInputChannel, int)
+     *
+     * 服务端收到PartitionRequest请求处理：
+     *   @see org.apache.flink.runtime.io.network.netty.PartitionRequestServerHandler#channelRead0(ChannelHandlerContext, NettyMessage)
+     *   @see org.apache.flink.runtime.io.network.netty.CreditBasedSequenceNumberingViewReader#requestSubpartitionViewOrRegisterListener
+     *
+     * 服务端发送buffer：
+     *   通知ResultSubpartitionView有数据可用
+     *   @see CreditBasedSequenceNumberingViewReader#notifyDataAvailable(ResultSubpartitionView)
+     *   CreditBasedSequenceNumberingViewReader和LocalInputChannel一样实现了BufferAvailabilityListener接口, 用于感知数据可用, 然后发送数据为下游
+     *   @see org.apache.flink.runtime.io.network.netty.PartitionRequestQueue
+     *   @see PartitionRequestQueue#notifyReaderNonEmpty(NetworkSequenceViewReader): 触发netty：ctx.pipeline().fireUserEventTriggered(reader)
+     *   @see PartitionRequestQueue#userEventTriggered(ChannelHandlerContext, Object)
+     *   @see PartitionRequestQueue#enqueueAvailableReader(NetworkSequenceViewReader): 可用reader放入队列
+     *   给消费者发送buffer
+     *   @see PartitionRequestQueue#channelWritabilityChanged(ChannelHandlerContext): 有数据可写触发
+     *   @see PartitionRequestQueue#writeAndFlushNextMessageIfPossible(Channel): 给下游发送buffer响应
+     *
+     * RemoteInputChannel收到服务端buffer返回后处理:
+     *  @see org.apache.flink.runtime.io.network.netty.CreditBasedPartitionRequestClientHandler#channelRead(ChannelHandlerContext, Object)
+     *  @see org.apache.flink.runtime.io.network.netty.CreditBasedPartitionRequestClientHandler#decodeMsg(Object)
+     *  @see org.apache.flink.runtime.io.network.netty.CreditBasedPartitionRequestClientHandler#decodeBufferOrEvent
+     *  @see this#onBuffer(Buffer, int, int, int)
+     *
+     * Requests a remote subpartition.
+     */
     @VisibleForTesting
     @Override
     public void requestSubpartitions() throws IOException, InterruptedException {
@@ -202,6 +256,7 @@ public class RemoteInputChannel extends InputChannel {
                 throw new PartitionConnectionException(partitionId, e);
             }
 
+            // 向远程发送PartitionRequest请求, PartitionRequest包含channel的partitionId, consumedSubpartitionIndexSet, initialCredit信息
             partitionRequestClient.requestSubpartition(
                     partitionId, consumedSubpartitionIndexSet, this, 0);
         }
@@ -259,6 +314,7 @@ public class RemoteInputChannel extends InputChannel {
         final SequenceBuffer next;
         final DataType nextDataType;
 
+        // 从receivedBuffers读取buffer
         synchronized (receivedBuffers) {
             next = receivedBuffers.poll();
 
@@ -426,6 +482,7 @@ public class RemoteInputChannel extends InputChannel {
      */
     @Override
     public void notifyBufferAvailable(int numAvailableBuffers) throws IOException {
+        // 发送AddCreditMessage请求时unannouncedCredit会重置为0
         if (numAvailableBuffers > 0 && unannouncedCredit.getAndAdd(numAvailableBuffers) == 0) {
             notifyCreditAvailable();
         }
@@ -549,6 +606,8 @@ public class RemoteInputChannel extends InputChannel {
     }
 
     /**
+     * 接收从生产者buffer响应的backlog积压。
+     * 如果可用缓冲区的数量小于backlog+initialCredit，它将向缓冲区管理器请求浮动缓冲区，然后向生产者通知未宣布的信用。
      * Receives the backlog from the producer's buffer response. If the number of available buffers
      * is less than backlog + initialCredit, it will request floating buffers from the buffer
      * manager, and then notify unannounced credits to the producer.
@@ -556,10 +615,20 @@ public class RemoteInputChannel extends InputChannel {
      * @param backlog The number of unsent buffers in the producer's sub partition.
      */
     public void onSenderBacklog(int backlog) throws IOException {
+        /**
+         * numAvailableBuffers = bufferManager.requestFloatingBuffers(backlog + initialCredit)
+         * notifyBufferAvailable(numAvailableBuffers): 通知可用的buffer数量
+         */
         notifyBufferAvailable(bufferManager.requestFloatingBuffers(backlog + initialCredit));
     }
 
     /**
+     * 从服务端收到buffer(数据)和backlog(积压的buffer数, 用于反压)
+     *   buffer加入到receivedBuffers
+     *   如果之前没数据调用inputGate.notifyChannelNonEmpty(this)通知inputGate有数据了
+     *   如果backlog>=0调用onSenderBacklog(backlog)通知服务端可用的buffer数量
+     *   @see #onSenderBacklog(int)
+     *
      * Handles the input buffer. This method is taking over the ownership of the buffer and is fully
      * responsible for cleaning it up both on the happy path and in case of an error.
      */
@@ -568,6 +637,7 @@ public class RemoteInputChannel extends InputChannel {
         boolean recycleBuffer = true;
 
         try {
+            // 校验编号
             if (expectedSequenceNumber != sequenceNumber) {
                 onError(new BufferReorderingException(expectedSequenceNumber, sequenceNumber));
                 return;

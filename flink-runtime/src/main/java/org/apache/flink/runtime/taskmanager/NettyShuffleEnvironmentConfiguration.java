@@ -331,6 +331,7 @@ public class NettyShuffleEnvironmentConfiguration {
                                                 .NETWORK_PARTITION_REQUEST_TIMEOUT)
                                 .toMillis();
 
+        // taskmanager.network.memory.buffers-per-channel
         int buffersPerChannel =
                 configuration.get(NettyShuffleEnvironmentOptions.NETWORK_BUFFERS_PER_CHANNEL);
         int extraBuffersPerGate =
