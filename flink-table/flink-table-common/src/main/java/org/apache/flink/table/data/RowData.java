@@ -35,6 +35,10 @@ import static org.apache.flink.table.types.logical.utils.LogicalTypeChecks.getPr
 import static org.apache.flink.table.types.logical.utils.LogicalTypeChecks.getScale;
 
 /**
+ * flink sql内部数据的顶级接口，下面的表格列出了sql类型个内部使用类型的对应关系。
+ * 有不同的实现类，这些实现是为不同的场景设计的：
+ *   BinaryRowData使用MemorySegment二进制实现，减少序列化和反序列化，flink内部使用
+ *   GenericRowData使用java对象数组实现，数组易于构造且更新高效，旨在供公众使用，并具有稳定的行为。如果需要内部数据结构，建议使用此类构造RowData的实例，比如定义source, sink, lookup都会使用GenericRowData。
  * Base interface for an internal data structure representing data of {@link RowType} and other
  * (possibly nested) structured types such as {@link StructuredType} in the table ecosystem.
  *

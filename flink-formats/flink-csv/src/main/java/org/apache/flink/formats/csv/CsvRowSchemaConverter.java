@@ -158,6 +158,7 @@ public final class CsvRowSchemaConverter {
         return builder.build();
     }
 
+    // RowType => CsvSchema
     /** Convert {@link RowType} to {@link CsvSchema}. */
     public static CsvSchema convert(RowType rowType) {
         Builder builder = new CsvSchema.Builder();

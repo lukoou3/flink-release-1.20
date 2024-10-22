@@ -76,6 +76,7 @@ public class CsvToRowDataConverters implements Serializable {
     }
 
     public CsvToRowDataConverter createRowConverter(RowType rowType, boolean isTopLevel) {
+        // 每个字段的解析
         final CsvToRowDataConverter[] fieldConverters =
                 rowType.getFields().stream()
                         .map(RowType.RowField::getType)
@@ -84,6 +85,7 @@ public class CsvToRowDataConverters implements Serializable {
         final String[] fieldNames = rowType.getFieldNames().toArray(new String[0]);
         final int arity = fieldNames.length;
 
+        // csv解析也是使用的jsonNode?
         return jsonNode -> {
             int nodeSize = jsonNode.size();
 

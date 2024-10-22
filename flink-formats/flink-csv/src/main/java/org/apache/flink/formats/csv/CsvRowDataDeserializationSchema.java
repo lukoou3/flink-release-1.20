@@ -77,6 +77,7 @@ public final class CsvRowDataDeserializationSchema implements DeserializationSch
 
     @Override
     public void open(InitializationContext context) {
+        // 使用Jackson的ObjectReader也能读取CSV
         this.objectReader =
                 JacksonMapperFactory.createCsvMapper().readerFor(JsonNode.class).with(csvSchema);
     }
@@ -109,6 +110,7 @@ public final class CsvRowDataDeserializationSchema implements DeserializationSch
             Preconditions.checkNotNull(resultTypeInfo, "Result type information must not be null.");
             this.rowResultType = rowResultType;
             this.resultTypeInfo = resultTypeInfo;
+            // RowType => CsvSchema
             this.csvSchema = CsvRowSchemaConverter.convert(rowReadType);
         }
 
