@@ -47,6 +47,15 @@ import java.util.List;
 import java.util.Map;
 
 /**
+ * 有界的event-time窗口聚合函数。
+ * sum(c) OVER (PARTITION BY b ORDER BY rowtime RANGE BETWEEN INTERVAL '4' SECOND PRECEDING AND CURRENT ROW)
+ *
+ * 基本和proc-time一样，就是这里有过期数据丢弃的处理。
+ * 每行的数据当watermark到此行数据的时间就会输出
+ * 不过这里有过期数据丢弃的处理，当元素到来时如果元素时间小于等于上一次触发的时间就会丢弃，
+ * 也是正常情况下如果元素时间小于当前的watermark就会被丢弃，
+ * 这样的处理逻辑还是可以的，只要设置合适的watermark，基本就没有丢弃的数据，丢弃的数据可以在Metric看到(name = numLateRecordsDropped)
+ *
  * Process Function for RANGE clause event-time bounded OVER window.
  *
  * <p>E.g.: SELECT rowtime, b, c, min(c) OVER (PARTITION BY b ORDER BY rowtime RANGE BETWEEN
@@ -106,6 +115,7 @@ public class RowTimeRangeBoundedPrecedingFunction<K>
         this.genAggsHandler = genAggsHandler;
         this.accTypes = accTypes;
         this.inputFieldTypes = inputFieldTypes;
+        // 窗口的时长
         this.precedingOffset = precedingOffset;
         this.rowTimeIdx = rowTimeIdx;
     }
@@ -143,20 +153,33 @@ public class RowTimeRangeBoundedPrecedingFunction<K>
                 getRuntimeContext().getMetricGroup().counter(LATE_ELEMENTS_DROPPED_METRIC_NAME);
     }
 
+    /**
+     *
+     * 想实现多个窗口的聚合，可不可以使用最大的窗口，使用if过滤？
+     * 看了下源码，并不能，input每次就确定了要是输入curren_timestamp,元素输入时就会计算好，而不是over聚合时再计算
+     * 而且聚合有增量加减的逻辑，也不应该你有这种实现
+     */
     @Override
     public void processElement(
             RowData input,
             KeyedProcessFunction<K, RowData, RowData>.Context ctx,
             Collector<RowData> out)
             throws Exception {
+        // 触发时间, 当watermark到此行数据的时间就会输出
         // triggering timestamp for trigger calculation
         long triggeringTs = input.getLong(rowTimeIdx);
 
+        // 上一次触发的ts
         Long lastTriggeringTs = lastTriggeringTsState.value();
         if (lastTriggeringTs == null) {
             lastTriggeringTs = 0L;
         }
 
+        /**
+         * 检查元素是否过期：
+         *      没过期，保存元素并且注册定时器等到watermark到这个元素的时间，输出元素
+         *      过期，直接丢弃，更新numLateRecordsDropped Metric
+         */
         // check if the data is expired, if not, save the data and register event time timer
         if (triggeringTs > lastTriggeringTs) {
             List<RowData> data = inputState.get(triggeringTs);
@@ -198,6 +221,7 @@ public class RowTimeRangeBoundedPrecedingFunction<K>
             KeyedProcessFunction<K, RowData, RowData>.OnTimerContext ctx,
             Collector<RowData> out)
             throws Exception {
+        // 清理状态数据的代码，可以先忽略
         Long cleanupTimestamp = cleanupTsState.value();
         // if cleanupTsState has not been updated then it is safe to cleanup states
         if (cleanupTimestamp != null && cleanupTimestamp <= timestamp) {
@@ -209,6 +233,7 @@ public class RowTimeRangeBoundedPrecedingFunction<K>
             return;
         }
 
+        // 当前时间的元素list
         // gets all window data from state for the calculation
         List<RowData> inputs = inputState.get(timestamp);
 
@@ -233,6 +258,7 @@ public class RowTimeRangeBoundedPrecedingFunction<K>
                 Map.Entry<Long, List<RowData>> data = iter.next();
                 Long dataTs = data.getKey();
                 Long offset = timestamp - dataTs;
+                // 聚合值减去过期的数据
                 if (offset > precedingOffset) {
                     List<RowData> retractDataList = data.getValue();
                     if (retractDataList != null) {
@@ -254,6 +280,7 @@ public class RowTimeRangeBoundedPrecedingFunction<K>
                 }
             }
 
+            // 把当前时间戳的元素聚合数据
             // do accumulation
             dataListIndex = 0;
             while (dataListIndex < inputs.size()) {
@@ -266,6 +293,7 @@ public class RowTimeRangeBoundedPrecedingFunction<K>
             // get aggregate result
             RowData aggValue = function.getValue();
 
+            // 把当前时间戳的元素输出
             // copy forwarded fields to output row and emit output row
             dataListIndex = 0;
             while (dataListIndex < inputs.size()) {
@@ -275,6 +303,7 @@ public class RowTimeRangeBoundedPrecedingFunction<K>
                 dataListIndex += 1;
             }
 
+            // 删除过期数据
             // remove the data that has been retracted
             dataListIndex = 0;
             while (dataListIndex < retractTsList.size()) {
@@ -282,6 +311,10 @@ public class RowTimeRangeBoundedPrecedingFunction<K>
                 dataListIndex += 1;
             }
 
+            /**
+             * 更新聚合值, 可以看到这里流聚合的实现还是挺高效的，不是每次遍历全部，而是减去过期的加上新增的
+             * 看了下自定义聚合函数，AggregateFunction的retract() 在 bounded OVER 窗口中是必须实现的
+             */
             // update the value of accumulators for future incremental computation
             accumulators = function.getAccumulators();
             accState.update(accumulators);

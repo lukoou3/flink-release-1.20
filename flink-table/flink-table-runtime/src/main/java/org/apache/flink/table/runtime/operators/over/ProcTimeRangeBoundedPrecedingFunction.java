@@ -46,6 +46,10 @@ import java.util.List;
 import java.util.Map;
 
 /**
+ * 有界的proc-time窗口聚合函数。
+ * https://nightlies.apache.org/flink/flink-docs-release-1.20/docs/dev/table/sql/queries/over-agg/
+ * sum(c) OVER (PARTITION BY b ORDER BY proctime RANGE BETWEEN INTERVAL '4' SECOND PRECEDING AND CURRENT ROW)
+ *
  * Process Function used for the aggregate in bounded proc-time OVER window.
  *
  * <p>E.g.: SELECT currtime, b, c, min(c) OVER (PARTITION BY b ORDER BY proctime RANGE BETWEEN
@@ -81,6 +85,8 @@ public class ProcTimeRangeBoundedPrecedingFunction<K>
         this.genAggsHandler = genAggsHandler;
         this.accTypes = accTypes;
         this.inputFieldTypes = inputFieldTypes;
+        // 窗口的时长，例如"range between interval '10' second preceding and current row"就是 10 * 1000
+        // 过滤有效的数据
         this.precedingTimeBoundary = precedingTimeBoundary;
     }
 
@@ -116,9 +122,15 @@ public class ProcTimeRangeBoundedPrecedingFunction<K>
             KeyedProcessFunction<K, RowData, RowData>.Context ctx,
             Collector<RowData> out)
             throws Exception {
+        // 当前的处理时间
         long currentTime = ctx.timerService().currentProcessingTime();
         // buffer the event incoming event
 
+        /***
+         * 把窗口中的元素放到inputState(MapState<Long, List<RowData>>)中，key为处理时间
+         * 注册定时器下一ms处理元素
+         * 同时注册清理数据的定时器
+         */
         // add current element to the window list of elements with corresponding timestamp
         List<RowData> rowList = inputState.get(currentTime);
         // null value means that this is the first event received for this timestamp
@@ -154,6 +166,7 @@ public class ProcTimeRangeBoundedPrecedingFunction<K>
             KeyedProcessFunction<K, RowData, RowData>.OnTimerContext ctx,
             Collector<RowData> out)
             throws Exception {
+        // 清理状态数据的代码，可以先忽略
         Long cleanupTimestamp = cleanupTsState.value();
         // if cleanupTsState has not been updated then it is safe to cleanup states
         if (cleanupTimestamp != null && cleanupTimestamp <= timestamp) {
@@ -191,6 +204,7 @@ public class ProcTimeRangeBoundedPrecedingFunction<K>
         // set accumulators in context first
         function.setAccumulators(accumulators);
 
+        // 窗口的范围
         // update the elements to be removed and retract them from aggregators
         long limit = currentTime - precedingTimeBoundary;
 
@@ -210,6 +224,7 @@ public class ProcTimeRangeBoundedPrecedingFunction<K>
                     int iRemove = 0;
                     while (iRemove < elementsRemove.size()) {
                         RowData retractRow = elementsRemove.get(iRemove);
+                        // 聚合值减去过期的数据
                         function.retract(retractRow);
                         iRemove += 1;
                     }
@@ -227,6 +242,7 @@ public class ProcTimeRangeBoundedPrecedingFunction<K>
             }
         }
 
+        // 删除过期数据
         // need to remove in 2 steps not to have concurrent access errors via iterator to the
         // MapState
         int i = 0;
@@ -235,6 +251,7 @@ public class ProcTimeRangeBoundedPrecedingFunction<K>
             i += 1;
         }
 
+        // 把当前时间戳的元素聚合数据
         // add current elements to aggregator. Multiple elements might
         // have arrived in the same proctime
         // the same accumulator value will be computed for all elements
@@ -245,6 +262,7 @@ public class ProcTimeRangeBoundedPrecedingFunction<K>
             iElemenets += 1;
         }
 
+        // 把当前时间戳的元素输出
         // we need to build the output and emit for every event received at this proctime
         iElemenets = 0;
         RowData aggValue = function.getValue();
@@ -255,6 +273,10 @@ public class ProcTimeRangeBoundedPrecedingFunction<K>
             iElemenets += 1;
         }
 
+        /**
+         * 更新聚合值, 可以看到这里流聚合的实现还是挺高效的，不是每次遍历全部，而是减去过期的加上新增的
+         * 看了下自定义聚合函数，AggregateFunction的retract() 在 bounded OVER 窗口中是必须实现的
+         */
         // update the value of accumulators for future incremental computation
         accumulators = function.getAccumulators();
         accState.update(accumulators);
