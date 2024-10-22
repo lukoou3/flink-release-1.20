@@ -54,6 +54,8 @@ import java.util.concurrent.atomic.AtomicReference;
 import static org.apache.flink.util.Preconditions.checkNotNull;
 
 /**
+ * RPC Endpoint的基类，实现服务端接口的功能，和spark的RpcEndpoint类似，调用start()启动后会先调用onStart()方法。
+ *
  * Base class for RPC endpoints. Distributed components which offer remote procedure calls have to
  * extend the RPC endpoint base class. An RPC endpoint is backed by an {@link RpcService}.
  *

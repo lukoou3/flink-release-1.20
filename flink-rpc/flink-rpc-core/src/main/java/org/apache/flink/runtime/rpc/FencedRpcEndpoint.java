@@ -26,6 +26,10 @@ import java.util.Map;
 import java.util.UUID;
 
 /**
+ * 增加安全认证的RpcEndpoint基类，rpc只有token一样时才能调用
+ * JobMaster和ResourceManager都继承这个类
+ * TaskExecutor没继承这个类，直接继承的RpcEndpoint
+ *
  * Base class for fenced {@link RpcEndpoint}. A fenced rpc endpoint expects all rpc messages being
  * enriched with fencing tokens. Furthermore, the rpc endpoint has its own fencing token assigned.
  * The rpc is then only executed if the attached fencing token equals the endpoint's own token.

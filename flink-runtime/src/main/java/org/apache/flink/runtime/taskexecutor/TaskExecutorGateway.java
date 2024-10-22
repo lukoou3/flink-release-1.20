@@ -53,7 +53,11 @@ import java.util.Collection;
 import java.util.Set;
 import java.util.concurrent.CompletableFuture;
 
-/** {@link TaskExecutor} RPC gateway interface. */
+/**
+ * TaskExecutor的通信接口
+ *
+ * {@link TaskExecutor} RPC gateway interface.
+ */
 public interface TaskExecutorGateway
         extends RpcGateway, TaskExecutorOperatorEventGateway, TaskExecutorThreadInfoGateway {
 
@@ -80,6 +84,7 @@ public interface TaskExecutorGateway
             @RpcTimeout Time timeout);
 
     /**
+     * 提交一个Task到TaskExecutor
      * Submit a {@link Task} to the {@link TaskExecutor}.
      *
      * @param tdd describing the task to submit

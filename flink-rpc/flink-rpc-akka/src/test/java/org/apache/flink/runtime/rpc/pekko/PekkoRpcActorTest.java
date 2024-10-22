@@ -696,6 +696,12 @@ class PekkoRpcActorTest {
         }
 
         @Override
+        protected void onStart() throws Exception {
+            super.onStart();
+            System.out.println("onStart");
+        }
+
+        @Override
         public CompletableFuture<SerializedValue<String>> getSerializedValue() {
             return CompletableFuture.completedFuture(SERIALIZED_VALUE);
         }
