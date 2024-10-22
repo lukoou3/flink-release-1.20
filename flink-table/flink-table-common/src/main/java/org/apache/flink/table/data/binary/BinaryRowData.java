@@ -39,6 +39,21 @@ import java.nio.ByteOrder;
 import static org.apache.flink.util.Preconditions.checkArgument;
 
 /**
+ * RowData的一种实现，由MemorySegment而不是Object支持。它可以显著减少Java对象的序列化/反序列化。
+ *
+ * 一个Row有两部分：固定长度部分和可变长度部分。
+ * 固定长度部分包含1字节的header、nullBits和field values。
+ * nullBits用于标记属性是否为空，并与8字节的word对齐。
+ * field values包含固定长度的基元类型和可变长度的值，这些值可以存储在8个字节内。如果它不适合可变长度字段，则存储可变长度部分的size和offset。
+ *
+ * 固定长度部分肯定会落入MemorySegment中，这将加快字段的读写速度。在写入阶段，如果目标内存段的空间小于固定长度的部分大小，我们将跳过该空间。
+ * 因此，单行中的字段数量不能超过单个MemorySegment的容量，如果字段太多，我们建议用户设置更大的MemorySegment pageSize。
+ *
+ * 可变长度部分可能属于多个MemorySegments。
+ *
+ * 固定部分所占字节大小: header(1字节) + nullBits + 每个字段字段固定大小(8字节) * 字段数
+ * 变成字段的固定部分存储内容：offsetAndSize =  offset(前4个字节) + size(后4个字节)
+ *
  * An implementation of {@link RowData} which is backed by {@link MemorySegment} instead of Object.
  * It can significantly reduce the serialization/deserialization of Java objects.
  *
@@ -68,10 +83,19 @@ public final class BinaryRowData extends BinarySection
     public static final int HEADER_SIZE_IN_BITS = 8;
 
     public static int calculateBitSetWidthInBytes(int arity) {
+        /**
+         * header + nullBits所占字节大小, 64字节最小单位, 8字节对齐
+         * 每个字段占一位(bit), 一个字节可以存8个字段, 8个字节(long类型大小)可以存64个字段
+         * 这个header存的是RowKind:0(INSERT),1(UPDATE_BEFORE),2(UPDATE_AFTER),3(DELETE)
+         */
         return ((arity + 63 + HEADER_SIZE_IN_BITS) / 64) * 8;
     }
 
     public static int calculateFixPartSizeInBytes(int arity) {
+        /**
+         * 固定部分所占字节大小: header(1字节) + nullBits + 每个字段字段固定大小(8字节) * 字段数
+         * string,数组等变长数据类型需要额外的字节存
+         */
         return calculateBitSetWidthInBytes(arity) + 8 * arity;
     }
 
@@ -115,7 +139,7 @@ public final class BinaryRowData extends BinarySection
     public BinaryRowData(int arity) {
         checkArgument(arity >= 0);
         this.arity = arity;
-        this.nullBitsSizeInBytes = calculateBitSetWidthInBytes(arity);
+        this.nullBitsSizeInBytes = calculateBitSetWidthInBytes(arity); // 这个和spark的UnsafeRow一样, 头部多个一个header(1byte), header存的是RowKind
     }
 
     private int getFieldOffset(int pos) {
@@ -144,7 +168,7 @@ public final class BinaryRowData extends BinarySection
 
     @Override
     public void setRowKind(RowKind kind) {
-        segments[0].put(offset, kind.toByteValue());
+        segments[0].put(offset, kind.toByteValue()); // header存的RowKind类型
     }
 
     public void setTotalSize(int sizeInBytes) {
@@ -166,6 +190,11 @@ public final class BinaryRowData extends BinarySection
     public void setNullAt(int i) {
         assertIndexIsValid(i);
         BinarySegmentUtils.bitSet(segments[0], offset, i + HEADER_SIZE_IN_BITS);
+        /**
+         * 必须设置固定长度字段的值内容为0
+         * 1.仅仅int/long/boolean...(长度字段类型)会调这个setNullAt
+         * 2.设置零值为了计算equals和hashCode方法。equals和hashCode方法直接计算的整个字节数组内容
+         */
         // We must set the fixed length part zero.
         // 1.Only int/long/boolean...(Fix length type) will invoke this setNullAt.
         // 2.Set to zero in order to equals and hash operation bytes calculation.

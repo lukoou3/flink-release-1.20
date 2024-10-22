@@ -127,6 +127,25 @@ public class BinaryRowDataTest {
     }
 
     @Test
+    public void testBinaryRowWriter() {
+        int arity = 4;
+        BinaryRowData row = new BinaryRowData(arity);
+        System.out.println(row.getFixedLengthPartSize());
+        BinaryRowWriter writer = new BinaryRowWriter(row, 64);
+        writer.writeInt(0, 10);
+        writer.writeString(1, fromString("flink"));
+        writer.writeString(2, fromString("Hello spark"));
+        writer.writeLong(3, 3333333555555555L);
+        writer.complete();
+
+        assert row.getInt(0) == 10;
+        assert row.getString(1).toString().equals("flink");
+        assert row.getString(2).toString().equals("Hello spark");
+        assert row.getLong(3) == 3333333555555555L;
+
+    }
+
+    @Test
     public void testWriter() {
 
         int arity = 13;

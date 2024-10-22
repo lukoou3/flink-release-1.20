@@ -412,6 +412,8 @@ public final class BinarySegmentUtils {
     }
 
     /**
+     * 获取这个索引对应字节的索引: bitIndex >>> 3 = bitIndex / 8
+     * 第一个字节存储:[0, 8), 第二个字节存储:[8, 16)
      * Given a bit index, return the byte index containing it.
      *
      * @param bitIndex the bit index.
@@ -429,9 +431,9 @@ public final class BinarySegmentUtils {
      * @param index bit index from base offset.
      */
     public static void bitUnSet(MemorySegment segment, int baseOffset, int index) {
-        int offset = baseOffset + byteIndex(index);
-        byte current = segment.get(offset);
-        current &= ~(1 << (index & BIT_BYTE_INDEX_MASK));
+        int offset = baseOffset + byteIndex(index); // 所在字节对应的下标
+        byte current = segment.get(offset); // 所在字节的值
+        current &= ~(1 << (index & BIT_BYTE_INDEX_MASK)); // 所在字节更新对应位bit值为0
         segment.put(offset, current);
     }
 
@@ -443,9 +445,9 @@ public final class BinarySegmentUtils {
      * @param index bit index from base offset.
      */
     public static void bitSet(MemorySegment segment, int baseOffset, int index) {
-        int offset = baseOffset + byteIndex(index);
-        byte current = segment.get(offset);
-        current |= (1 << (index & BIT_BYTE_INDEX_MASK));
+        int offset = baseOffset + byteIndex(index); // 所在字节对应的下标
+        byte current = segment.get(offset); // 所在字节的值
+        current |= (1 << (index & BIT_BYTE_INDEX_MASK)); // 所在字节更新对应位bit值为1
         segment.put(offset, current);
     }
 
@@ -457,9 +459,9 @@ public final class BinarySegmentUtils {
      * @param index bit index from base offset.
      */
     public static boolean bitGet(MemorySegment segment, int baseOffset, int index) {
-        int offset = baseOffset + byteIndex(index);
-        byte current = segment.get(offset);
-        return (current & (1 << (index & BIT_BYTE_INDEX_MASK))) != 0;
+        int offset = baseOffset + byteIndex(index); // 所在字节对应的下标
+        byte current = segment.get(offset); // 所在字节的值
+        return (current & (1 << (index & BIT_BYTE_INDEX_MASK))) != 0; // 对应位bit值是否为0
     }
 
     /**

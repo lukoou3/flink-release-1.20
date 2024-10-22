@@ -60,7 +60,7 @@ abstract class AbstractBinaryWriter implements BinaryWriter {
 
     protected MemorySegment segment;
 
-    protected int cursor;
+    protected int cursor; // 写入变长部分的指针
 
     protected DataOutputViewStreamWrapper outputView;
 
@@ -81,15 +81,21 @@ abstract class AbstractBinaryWriter implements BinaryWriter {
         BinaryStringData string = (BinaryStringData) input;
         if (string.getSegments() == null) {
             String javaObject = string.toString();
+            // 调用写入字节数组的方法
             writeBytes(pos, javaObject.getBytes(StandardCharsets.UTF_8));
         } else {
             int len = string.getSizeInBytes();
+            // 小于8做了优化(内容写入到固定部分), 否则和spark UnsafeRowWriter类似
             if (len <= 7) {
+                // 这个bytes还是线程重用的，这个没有并发问题吗？应该没有，每个线程的bytes是独立的，单个线程不会这个方法走一半然后走另一个，那个是协程。
                 byte[] bytes = BinarySegmentUtils.allocateReuseBytes(len);
+                // 把str内容复制到bytes中
                 BinarySegmentUtils.copyToBytes(
                         string.getSegments(), string.getOffset(), bytes, 0, len);
+                // len < 8时, bytes写入到固定部分
                 writeBytesToFixLenPart(segment, getFieldOffset(pos), bytes, len);
             } else {
+                // len >= 8时, bytes写入到变长部分
                 writeSegmentsToVarLenPart(pos, string.getSegments(), string.getOffset(), len);
             }
         }
@@ -97,13 +103,17 @@ abstract class AbstractBinaryWriter implements BinaryWriter {
 
     private void writeBytes(int pos, byte[] bytes) {
         int len = bytes.length;
+        // 写入方法和字符串一样
         if (len <= BinaryFormat.MAX_FIX_PART_DATA_SIZE) {
+            // len < 8时, bytes写入到固定部分
             writeBytesToFixLenPart(segment, getFieldOffset(pos), bytes, len);
         } else {
+            // len >= 8时, bytes写入到变长部分
             writeBytesToVarLenPart(pos, bytes, len);
         }
     }
 
+    // 写入数组, 和spark类似，但是感觉没spark方便
     @Override
     public void writeArray(int pos, ArrayData input, ArrayDataSerializer serializer) {
         BinaryArrayData binary = serializer.toBinaryArray(input);
@@ -276,19 +286,32 @@ abstract class AbstractBinaryWriter implements BinaryWriter {
         }
     }
 
+    /**
+     * len >= 8时, bytes写入到变长部分
+     * 写入size格式化成8的倍数
+     * 固定部分写入offset和len。long offsetAndSize = offset(前4个字节) + size(后4个字节)
+     * 从cursor(offset)位置开始写入bytes
+     * cursor变长部分指针增加写入size
+     */
     private void writeBytesToVarLenPart(int pos, byte[] bytes, int len) {
+        // 8的倍数不变, 否则补齐为8的倍数
         final int roundedSize = roundNumberOfBytesToNearestWord(len);
 
+        // 空间不够就扩容
         // grow the global buffer before writing data.
         ensureCapacity(roundedSize);
 
+        // 写入是以8字节为单位的, 把默认8字节未使用部分填充0
         zeroOutPaddingBytes(len);
 
+        // 把bytes写入变长部分
         // Write the bytes to the variable length portion.
         segment.put(cursor, bytes, 0, len);
 
+        // 固定部分写入offset和len。long offsetAndSize =  offset(前4个字节) + size(后4个字节)
         setOffsetAndSize(pos, cursor, len);
 
+        // 移动写入变长部分的指针
         // move the cursor forward.
         cursor += roundedSize;
     }
@@ -307,14 +330,22 @@ abstract class AbstractBinaryWriter implements BinaryWriter {
     protected static int roundNumberOfBytesToNearestWord(int numBytes) {
         int remainder = numBytes & 0x07;
         if (remainder == 0) {
+            // 8的倍数, 不变
             return numBytes;
         } else {
+            // 补齐为8的倍数
             return numBytes + (8 - remainder);
         }
     }
 
+    /**
+     * len < 8时, bytes写入到固定部分
+     * 首个字节存:标志位(1bit) + 长度(7bit)
+     * 剩余7字节存bytes
+     */
     private static void writeBytesToFixLenPart(
             MemorySegment segment, int fieldOffset, byte[] bytes, int len) {
+        // 0x80 = 1000_0000, 第一个bit是1
         long firstByte = len | 0x80; // first bit is 1, other bits is len
         long sevenBytes = 0L; // real data
         if (BinaryRowData.LITTLE_ENDIAN) {

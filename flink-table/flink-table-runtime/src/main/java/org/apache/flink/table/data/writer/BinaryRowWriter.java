@@ -115,6 +115,10 @@ public final class BinaryRowWriter extends AbstractBinaryWriter {
         return nullBitsSizeInBytes + 8 * pos;
     }
 
+    /**
+     * 固定部分写入offset和len
+     * long offsetAndSize =  offset(前4个字节) + size(后4个字节)
+     */
     @Override
     public void setOffsetAndSize(int pos, int offset, long size) {
         final long offsetAndSize = ((long) offset << 32) | size;
