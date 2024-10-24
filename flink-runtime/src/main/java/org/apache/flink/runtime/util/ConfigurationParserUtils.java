@@ -100,6 +100,8 @@ public class ConfigurationParserUtils {
     }
 
     /**
+     * 解析校验配置的pageSize(taskmanager.memory.segment-size)，默认是32kb(32768)，校验：最小为4kb(4096)且必须是2的整次方。
+     *
      * Parses the configuration to get the page size and validates the value.
      *
      * @param configuration configuration object
@@ -112,13 +114,13 @@ public class ConfigurationParserUtils {
 
         // check page size of for minimum size
         checkConfigParameter(
-                pageSize >= MemoryManager.MIN_PAGE_SIZE,
+                pageSize >= MemoryManager.MIN_PAGE_SIZE, // 最小为4kb(4096)
                 pageSize,
                 TaskManagerOptions.MEMORY_SEGMENT_SIZE.key(),
                 "Minimum memory segment size is " + MemoryManager.MIN_PAGE_SIZE);
         // check page size for power of two
         checkConfigParameter(
-                MathUtils.isPowerOf2(pageSize),
+                MathUtils.isPowerOf2(pageSize), // 必须是2的整次方
                 pageSize,
                 TaskManagerOptions.MEMORY_SEGMENT_SIZE.key(),
                 "Memory segment size must be a power of 2.");

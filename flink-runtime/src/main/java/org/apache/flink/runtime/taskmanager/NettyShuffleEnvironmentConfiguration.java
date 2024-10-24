@@ -307,6 +307,10 @@ public class NettyShuffleEnvironmentConfiguration {
 
         final PortRange dataBindPortRange = getDataBindPortRange(configuration);
 
+        /**
+         * 解析校验配置的pageSize(taskmanager.memory.segment-size)，默认是32kb(32768)，校验：最小为4kb(4096)且必须是2的整次方。
+         * taskmanager.memory.segment-size:32kb
+         */
         final int pageSize = ConfigurationParserUtils.getPageSize(configuration);
 
         final NettyConfig nettyConfig =
@@ -316,6 +320,11 @@ public class NettyShuffleEnvironmentConfiguration {
                         taskManagerAddress,
                         dataBindPortRange);
 
+        /**
+         * 计算network buffers的数量。就是networkMemorySize / pageSize，默认是 64mb / 32kb = 2048。
+         *   taskmanager.memory.network.max: 64mb
+         *   taskmanager.memory.segment-size: 32kb
+         */
         final int numberOfNetworkBuffers =
                 calculateNumberOfNetworkBuffers(configuration, networkMemorySize, pageSize);
 
@@ -331,9 +340,10 @@ public class NettyShuffleEnvironmentConfiguration {
                                                 .NETWORK_PARTITION_REQUEST_TIMEOUT)
                                 .toMillis();
 
-        // taskmanager.network.memory.buffers-per-channel
+        // taskmanager.network.memory.buffers-per-channel: 2
         int buffersPerChannel =
                 configuration.get(NettyShuffleEnvironmentOptions.NETWORK_BUFFERS_PER_CHANNEL);
+        // taskmanager.network.memory.floating-buffers-per-gate: 8
         int extraBuffersPerGate =
                 configuration.get(NettyShuffleEnvironmentOptions.NETWORK_EXTRA_BUFFERS_PER_GATE);
 
@@ -341,9 +351,11 @@ public class NettyShuffleEnvironmentConfiguration {
                 configuration.getOptional(
                         NettyShuffleEnvironmentOptions.NETWORK_READ_MAX_REQUIRED_BUFFERS_PER_GATE);
 
+        // taskmanager.network.memory.max-buffers-per-channel: 10
         int maxBuffersPerChannel =
                 configuration.get(NettyShuffleEnvironmentOptions.NETWORK_MAX_BUFFERS_PER_CHANNEL);
 
+        // taskmanager.network.memory.max-overdraft-buffers-per-gate: 5
         int maxOverdraftBuffersPerGate =
                 configuration.get(
                         NettyShuffleEnvironmentOptions.NETWORK_MAX_OVERDRAFT_BUFFERS_PER_GATE);
@@ -484,6 +496,10 @@ public class NettyShuffleEnvironmentConfiguration {
     }
 
     /**
+     * 计算network buffers的数量。就是networkMemorySize / pageSize，默认是 64mb / 32kb = 2048。
+     *   taskmanager.memory.network.max: 64mb
+     *   taskmanager.memory.segment-size: 32kb
+     *
      * Calculates the number of network buffers based on configuration and jvm heap size.
      *
      * @param configuration configuration object

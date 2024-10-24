@@ -118,8 +118,8 @@ public class ResultPartitionFactory {
 
         this.partitionManager = partitionManager;
         this.channelManager = channelManager;
-        this.configuredNetworkBuffersPerChannel = configuredNetworkBuffersPerChannel;
-        this.floatingNetworkBuffersPerGate = floatingNetworkBuffersPerGate;
+        this.configuredNetworkBuffersPerChannel = configuredNetworkBuffersPerChannel; // taskmanager.network.memory.buffers-per-channel: 2
+        this.floatingNetworkBuffersPerGate = floatingNetworkBuffersPerGate; // taskmanager.network.memory.floating-buffers-per-gate: 8
         this.bufferPoolFactory = bufferPoolFactory;
         this.batchShuffleReadBufferPool = batchShuffleReadBufferPool;
         this.batchShuffleReadIOExecutor = batchShuffleReadIOExecutor;
@@ -127,11 +127,11 @@ public class ResultPartitionFactory {
         this.networkBufferSize = networkBufferSize;
         this.batchShuffleCompressionEnabled = batchShuffleCompressionEnabled;
         this.compressionCodec = compressionCodec;
-        this.maxBuffersPerChannel = maxBuffersPerChannel;
+        this.maxBuffersPerChannel = maxBuffersPerChannel; // taskmanager.network.memory.max-buffers-per-channel: 10
         this.sortShuffleMinBuffers = sortShuffleMinBuffers;
         this.sortShuffleMinParallelism = sortShuffleMinParallelism;
         this.sslEnabled = sslEnabled;
-        this.maxOverdraftBuffersPerGate = maxOverdraftBuffersPerGate;
+        this.maxOverdraftBuffersPerGate = maxOverdraftBuffersPerGate; // taskmanager.network.memory.max-overdraft-buffers-per-gate: 5
         this.hybridShuffleSpilledIndexRegionGroupSize = hybridShuffleSpilledIndexRegionGroupSize;
         this.hybridShuffleNumRetainedInMemoryRegionsMax =
                 hybridShuffleNumRetainedInMemoryRegionsMax;
@@ -397,11 +397,11 @@ public class ResultPartitionFactory {
                             type);
 
             return bufferPoolFactory.createBufferPool(
-                    pair.getLeft(),
-                    pair.getRight(),
+                    pair.getLeft(), // min = numSubpartitions + 1
+                    pair.getRight(), // max = numSubpartitions * configuredNetworkBuffersPerChannel + numFloatingBuffersPerGate
                     numberOfSubpartitions,
                     maxBuffersPerChannel,
-                    isOverdraftBufferNeeded(type) ? maxOverdraftBuffersPerGate : 0);
+                    isOverdraftBufferNeeded(type) ? maxOverdraftBuffersPerGate : 0); // maxOverdraftBuffersPerGate
         };
     }
 

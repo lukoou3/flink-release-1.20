@@ -27,7 +27,10 @@ import org.apache.flink.core.memory.MemorySegment;
 import org.apache.flink.core.memory.MemorySegmentFactory;
 import org.apache.flink.core.memory.MemorySegmentProvider;
 import org.apache.flink.runtime.io.AvailabilityProvider;
+import org.apache.flink.runtime.io.network.partition.consumer.BufferManager;
 import org.apache.flink.runtime.io.network.partition.consumer.RemoteInputChannel;
+import org.apache.flink.runtime.io.network.partition.consumer.SingleInputGate;
+import org.apache.flink.runtime.memory.MemoryManager;
 import org.apache.flink.util.ExceptionUtils;
 import org.apache.flink.util.MathUtils;
 import org.apache.flink.util.Preconditions;
@@ -124,6 +127,14 @@ public class NetworkBufferPool
 
         try {
             for (int i = 0; i < numberOfSegmentsToAllocate; i++) {
+                /**
+                 * 可以看到现在Flink Network全部使用的是堆外内存，ByteBuffer.allocateDirect(size)。
+                 * Network这些堆外内存buffer还是受jvm管理的，管理内存似乎不受jvm管理：调用的allocateOffHeapUnsafeMemory。
+                 * 管理内存使用的off-heap unsafe MemorySegment，需要手动释放。
+                 * The memory manager governs the memory that Flink uses for sorting, hashing, caching or off-heap state backends (e.g. RocksDB).
+                 *   @see MemoryManager#allocatePages(Object, Collection, int)
+                 *   @see MemorySegmentFactory#allocateOffHeapUnsafeMemory(int, java.lang.Object, java.lang.Runnable)
+                 */
                 availableMemorySegments.add(
                         MemorySegmentFactory.allocateUnpooledOffHeapMemory(segmentSize, null));
             }
@@ -464,6 +475,42 @@ public class NetworkBufferPool
             int maxBuffersPerChannel,
             int maxOverdraftBuffersPerGate)
             throws IOException {
+        /**
+         * 创建Task的LocalBufferPool，也就是ResultPartition的LocalBufferPool。这个是生产者使用的。
+         * numRequiredBuffers: 最小buffer数量，min = numSubpartitions + 1
+         * maxUsedBuffers: 最大buffer数量，max = numSubpartitions * configuredNetworkBuffersPerChannel + numFloatingBuffersPerGate
+         *   configuredNetworkBuffersPerChannel 默认 taskmanager.network.memory.buffers-per-channel: 2
+         *   floatingNetworkBuffersPerGat 默认 taskmanager.network.memory.floating-buffers-per-gate: 8
+         * numSubpartitions: 子分区数
+         * maxBuffersPerChannel: 每个channel(子分区)最大buffer数量，默认 taskmanager.network.memory.max-buffers-per-channel: 10
+         * maxOverdraftBuffersPerGate: 每个gate最大透支buffer数，默认 taskmanager.network.memory.max-overdraft-buffers-per-gate: 5
+         *
+         * 添加和销毁LocalBufferPool都会调用 redistributeBuffers():
+         *   根据此TaskManager所有的LocalBufferPool，根据每个LocalBufferPool的min,max buffer数，重新计算分配buffer
+         *   尽可能为每个LocalBufferPool分配max buffer，如果AvailableMemorySegment数量足够的话
+         *
+         * 所以：
+         *   并行度越大(numSubpartitions可能越大,hash等需要发往所以下游), 拓扑越复杂(多个输出多个ResultPartition等) Task需要的buffer数就越多
+         *   简单etl任务，一个chain或者chain之间分区发送方式是FORWARD，就只需要很少的buffer数量
+         *
+         *
+         * 消费者buffer使用补充：
+         * 消费者端RemoteInputChannel消耗的buffer数：
+         *   每个RemoteInputChannel独享initialCredit(默认是2)个buffer数: taskmanager.network.memory.buffers-per-channel
+         *   单个gate内所有RemoteInputChannel额外共享8个buffer数: taskmanager.network.memory.floating-buffers-per-gate
+         *
+         * 可以看到AvailableBufferQueue(RemoteInputChannel持有的buffer)内部有两个队列: exclusiveBuffers(独享), floatingBuffers(浮动共享).
+         *   @see BufferManager.AvailableBufferQueue
+         *
+         * 消费者的buffer数也是被管理的，初始化时同样会调用redistributeBuffers():
+         *   @see SingleInputGate#setupChannels()
+         *   @see RemoteInputChannel#setup()
+         *   @see BufferManager#requestExclusiveBuffers(int)
+         *   @see NetworkBufferPool#requestUnpooledMemorySegments(int)
+         *   @see NetworkBufferPool#tryRedistributeBuffers(int)
+         *   @see NetworkBufferPool#redistributeBuffers()
+         * RemoteInputChannel才会消耗buffer数，LocalInputChannel直接消费的同一个进程生产者的buffer。
+         */
         return internalCreateBufferPool(
                 numRequiredBuffers,
                 maxUsedBuffers,
@@ -518,6 +565,10 @@ public class NetworkBufferPool
                 resizableBufferPools.add(localBufferPool);
             }
 
+            /**
+             * 根据此TaskManager所有的LocalBufferPool，根据每个LocalBufferPool的min,max buffer数，重新计算分配buffer
+             * 尽可能为每个LocalBufferPool分配max buffer，如果AvailableMemorySegment数量足够的话
+             */
             redistributeBuffers();
 
             return localBufferPool;
@@ -590,6 +641,10 @@ public class NetworkBufferPool
         }
     }
 
+    /**
+     * 根据此TaskManager所有的LocalBufferPool，根据每个LocalBufferPool的min,max buffer数，重新计算分配buffer
+     * 尽可能为每个LocalBufferPool分配max buffer，如果AvailableMemorySegment数量足够的话
+     */
     // Must be called from synchronized block
     private void redistributeBuffers() {
         assert Thread.holdsLock(factoryLock);
@@ -598,6 +653,7 @@ public class NetworkBufferPool
             return;
         }
 
+        // 可能buffer的数量 = 总的 - 最少需要的
         // All buffers, which are not among the required ones
         final int numAvailableMemorySegment = totalNumberOfMemorySegments - numTotalRequiredBuffers;
 
@@ -661,6 +717,7 @@ public class NetworkBufferPool
                                     - numDistributedMemorySegment);
 
             numDistributedMemorySegment += mySize;
+            // 设置每个bufferPool最终计算的currentPoolSize = numBuffers，尽可能为每个LocalBufferPool分配max buffer
             bufferPool.setNumBuffers(bufferPool.getNumberOfRequiredMemorySegments() + mySize);
         }
 

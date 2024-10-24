@@ -1707,7 +1707,7 @@ class RemoteInputChannelTest {
     }
 
     private SingleInputGate buildInputGate() throws IOException {
-        final NetworkBufferPool networkBufferPool = new NetworkBufferPool(4, 4096);
+        final NetworkBufferPool networkBufferPool = new NetworkBufferPool(5, 4096);
         SingleInputGate inputGate =
                 new SingleInputGateBuilder()
                         .setChannelFactory(InputChannelBuilder::buildRemoteChannel)

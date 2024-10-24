@@ -175,10 +175,20 @@ public class NettyShuffleServiceFactory
                             .collect(Collectors.joining("\n\t")));
         }
 
+        /**
+         * 一个TaskManager维护一个NetworkBufferPool，负责这个TaskManager network buffer 的分配
+         * NetworkBufferPool实现了BufferPoolFactory接口，用来创建BufferPool，BufferPool的实现就是LocalBufferPool，每个Task拥有自己的LocalBufferPool。
+         * 每个TaskManager只有一个NetworkBufferPool ， 同一个TaskManager上的Task共享NetworkBufferPool。
+         * NetworkBufferPool持有该TaskManager在进行数据传递时所能够使用的所有内存，每个Task的 LocalBufferPool 所需要的内存都是从 NetworkBufferPool 申请而来的。
+         *
+         * 计算network buffers的数量。就是networkMemorySize / pageSize，默认是 64mb / 32kb = 2048。
+         *   taskmanager.memory.network.max: 64mb
+         *   taskmanager.memory.segment-size: 32kb
+         */
         NetworkBufferPool networkBufferPool =
                 new NetworkBufferPool(
-                        config.numNetworkBuffers(),
-                        config.networkBufferSize(),
+                        config.numNetworkBuffers(), // numberOfSegmentsToAllocate = numNetworkBuffers = numberOfNetworkBuffers
+                        config.networkBufferSize(), // segmentSize = networkBufferSize = pageSize
                         config.getRequestSegmentsTimeout());
 
         // we create a separated buffer pool here for batch shuffle instead of reusing the network

@@ -100,6 +100,8 @@ public final class BinaryRowData extends BinarySection
     }
 
     /**
+     * 判断sql数据类型是否为定长字段
+     * 如果它是一个固定长度的字段，我们可以调用此BinaryRowData的setXX方法进行就地更新。如果是可变长度字段，则不能使用此方法，因为底层数据是连续存储的。
      * If it is a fixed-length field, we can call this BinaryRowData's setXX method for in-place
      * updates. If it is variable-length field, can't use this method, because the underlying data
      * is stored continuously.

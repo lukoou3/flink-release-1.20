@@ -580,6 +580,11 @@ public class SingleInputGate extends IndexedInputGate {
         // Allocate enough exclusive and floating buffers to guarantee that job can make progress.
         // Note: An exception will be thrown if there is no buffer available in the given timeout.
 
+        /**
+         * 首先分配一个浮动缓冲区，以避免在独占缓冲区为0时发生潜在死锁。更多信息请参见FLINK-24035。
+         * https://issues.apache.org/jira/browse/FLINK-24035
+         * 正常情况下已经申请到了，这里就是多一个保证
+         */
         // First allocate a single floating buffer to avoid potential deadlock when the exclusive
         // buffer is 0. See FLINK-24035 for more information.
         bufferPool.reserveSegments(1);

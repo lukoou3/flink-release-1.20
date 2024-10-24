@@ -19,8 +19,12 @@
 package org.apache.flink.runtime.io.network.buffer;
 
 import org.apache.flink.annotation.VisibleForTesting;
+import org.apache.flink.core.io.IOReadableWritable;
 import org.apache.flink.core.memory.MemorySegment;
 import org.apache.flink.runtime.execution.CancelTaskException;
+import org.apache.flink.runtime.io.network.api.writer.ChannelSelectorRecordWriter;
+import org.apache.flink.runtime.io.network.api.writer.RecordWriter;
+import org.apache.flink.runtime.io.network.partition.BufferWritingResultPartition;
 import org.apache.flink.util.ExceptionUtils;
 
 import org.slf4j.Logger;
@@ -30,6 +34,7 @@ import javax.annotation.Nullable;
 import javax.annotation.concurrent.GuardedBy;
 
 import java.io.IOException;
+import java.nio.ByteBuffer;
 import java.util.ArrayDeque;
 import java.util.concurrent.CompletableFuture;
 import java.util.concurrent.ExecutionException;
@@ -39,31 +44,39 @@ import static org.apache.flink.util.Preconditions.checkState;
 import static org.apache.flink.util.concurrent.FutureUtils.assertNoException;
 
 /**
+ * 一个buffer pool，用来管理NetworkBuffer实例的创建，从NetworkBufferPool申请创建。
  * A buffer pool used to manage a number of {@link Buffer} instances from the {@link
  * NetworkBufferPool}.
  *
+ * 缓冲区请求被中介到网络缓冲池，以通过限制每个本地缓冲池的缓冲区数量来确保网络堆栈的无死锁运行。它还实现了缓冲区回收的默认机制，确保每个缓冲区最终都返回到网络缓冲池。
  * <p>Buffer requests are mediated to the network buffer pool to ensure deadlock free operation of
  * the network stack by limiting the number of buffers per local buffer pool. It also implements the
  * default mechanism for buffer recycling, which ensures that every buffer is ultimately returned to
  * the network buffer pool.
  *
+ * 此池的大小可以在运行时动态更改（setNumBuffers（int））。然后，它将lazily地将所需数量的缓冲区返回给NetworkBufferPool，以匹配其新大小。
  * <p>The size of this pool can be dynamically changed at runtime ({@link #setNumBuffers(int)}. It
  * will then lazily return the required number of buffers to the {@link NetworkBufferPool} to match
  * its new size.
  *
+ * 只有当numberOfRequestedMemorySegments < currentPoolSize + maxOverdraftBuffersPerGate时，才能请求新的缓冲区。换句话说，所有超过currentPoolSize的缓冲区都将被动态视为透支缓冲区。
  * <p>New buffers can be requested only when {@code numberOfRequestedMemorySegments <
  * currentPoolSize + maxOverdraftBuffersPerGate}. In other words, all buffers exceeding the
  * currentPoolSize will be dynamically regarded as overdraft buffers.
  *
+ * 可用性被定义为在后续的requestBuffer()/requestBufferBuilder()上返回一个非透支段，并抛出一个非阻塞的requestBufferBuilderBlocking(int)。特别地，
  * <p>Availability is defined as returning a non-overdraft segment on a subsequent {@link
  * #requestBuffer()}/ {@link #requestBufferBuilder()} and heaving a non-blocking {@link
  * #requestBufferBuilderBlocking(int)}. In particular,
  *
  * <ul>
+ *   <li>至少有一个可用的内存段。
  *   <li>There is at least one {@link #availableMemorySegments}.
+ *   <li>没有子分区达到maxBuffersPerChannel。
  *   <li>No subpartitions has reached {@link #maxBuffersPerChannel}.
  * </ul>
  *
+ * 为了确保此契约，只要NetworkBufferPool未达到maxNumberOfMemorySegments或一个子分区未达到配额，实现就会急切地从NetworkBufferPool获取额外的内存段。
  * <p>To ensure this contract, the implementation eagerly fetches additional memory segments from
  * {@link NetworkBufferPool} as long as it hasn't reached {@link #maxNumberOfMemorySegments} or one
  * subpartition reached the quota.
@@ -211,6 +224,10 @@ public class LocalBufferPool implements BufferPool {
 
         this.networkBufferPool = networkBufferPool;
         this.numberOfRequiredMemorySegments = numberOfRequiredMemorySegments;
+        /**
+         * 这只是初始值, 最终计算的值范围是：[numberOfRequiredMemorySegments, maxNumberOfMemorySegments]([min, max])
+         * @see NetworkBufferPool#redistributeBuffers()
+         */
         this.currentPoolSize = numberOfRequiredMemorySegments;
         this.maxNumberOfMemorySegments = maxNumberOfMemorySegments;
 
@@ -334,6 +351,19 @@ public class LocalBufferPool implements BufferPool {
         return toBufferBuilder(requestMemorySegment(UNKNOWN_CHANNEL), UNKNOWN_CHANNEL);
     }
 
+    /**
+     * 生产者子分区申请buffer：
+     * @see org.apache.flink.streaming.runtime.io.RecordWriterOutput#collect(org.apache.flink.streaming.runtime.streamrecord.StreamRecord)
+     * @see org.apache.flink.streaming.runtime.io.RecordWriterOutput#pushToRecordWriter(org.apache.flink.streaming.runtime.streamrecord.StreamRecord)
+     * @see ChannelSelectorRecordWriter#emit(IOReadableWritable)
+     * @see RecordWriter#emit(IOReadableWritable, int)
+     * @see BufferWritingResultPartition#emitRecord(ByteBuffer, int)
+     * @see BufferWritingResultPartition#appendUnicastDataForRecordContinuation(ByteBuffer, int)
+     * @see BufferWritingResultPartition#requestNewUnicastBufferBuilder(int)
+     * @see BufferWritingResultPartition#requestNewBufferBuilderFromPool(int)
+     * @see LocalBufferPool#requestBufferBuilder(int): 本方法
+     * @see LocalBufferPool#requestMemorySegment(int): 申请MemorySegment
+     */
     @Override
     public BufferBuilder requestBufferBuilder(int targetChannel) {
         return toBufferBuilder(requestMemorySegment(targetChannel), targetChannel);
@@ -399,6 +429,11 @@ public class LocalBufferPool implements BufferPool {
             if (!availableMemorySegments.isEmpty()) {
                 segment = availableMemorySegments.poll();
             } else if (isRequestedSizeReached()) {
+                /**
+                 * isRequestedSizeReached():
+                 *   numberOfRequestedMemorySegments >= currentPoolSize
+                 * 最多只能申请的buffer数量：currentPoolSize + maxOverdraftBuffersPerGate = numberOfRequiredMemorySegments(最小buffer数) + maxOverdraftBuffersPerGate(最大透支buffer数)
+                 */
                 // networkBufferPool.requestPooledMemorySegment()
                 // Only when the buffer request reaches the upper limit(i.e. current pool size),
                 // requests an overdraft buffer.
@@ -452,6 +487,7 @@ public class LocalBufferPool implements BufferPool {
     private MemorySegment requestOverdraftMemorySegmentFromGlobal() {
         assert Thread.holdsLock(availableMemorySegments);
 
+        // 最多只能申请的buffer数量：currentPoolSize + maxOverdraftBuffersPerGate = numberOfRequiredMemorySegments(最小buffer数) + maxOverdraftBuffersPerGate(最大透支buffer数)
         // if overdraft buffers(i.e. buffers exceeding poolSize) is greater than or equal to
         // maxOverdraftBuffersPerGate, no new buffer can be requested.
         if (numberOfRequestedMemorySegments - currentPoolSize >= maxOverdraftBuffersPerGate) {

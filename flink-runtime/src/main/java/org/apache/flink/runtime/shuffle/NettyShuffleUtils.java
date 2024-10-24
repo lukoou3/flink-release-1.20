@@ -77,11 +77,13 @@ public class NettyShuffleUtils {
         if (isSortShuffle) {
             min = sortShuffleMinBuffers;
         } else {
+            // numSubpartitions + 1
             min =
                     enableTieredStorage
                             ? Math.min(tieredStoreExclusiveBuffers, numSubpartitions + 1)
                             : (numSubpartitions + 1);
         }
+        //  numSubpartitions * configuredNetworkBuffersPerChannel + numFloatingBuffersPerGate
         int max =
                 type.isBounded()
                         ? numSubpartitions * configuredNetworkBuffersPerChannel

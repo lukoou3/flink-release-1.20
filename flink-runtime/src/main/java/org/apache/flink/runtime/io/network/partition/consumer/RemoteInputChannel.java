@@ -198,6 +198,14 @@ public class RemoteInputChannel extends InputChannel {
                 bufferManager.unsynchronizedGetAvailableExclusiveBuffers() == 0,
                 "Bug in input channel setup logic: exclusive buffers have already been set for this input channel.");
 
+        /**
+         * 消费者端RemoteInputChannel消耗的buffer数：
+         *   每个RemoteInputChannel独享initialCredit(默认是2)个buffer数: taskmanager.network.memory.buffers-per-channel
+         *   单个gate内所有RemoteInputChannel额外共享8个buffer数: taskmanager.network.memory.floating-buffers-per-gate
+         *
+         * 可以看到AvailableBufferQueue(RemoteInputChannel持有的buffer)内部有两个队列: exclusiveBuffers(独享), floatingBuffers(浮动共享).
+         * @see BufferManager.AvailableBufferQueue
+         */
         bufferManager.requestExclusiveBuffers(initialCredit);
     }
 
