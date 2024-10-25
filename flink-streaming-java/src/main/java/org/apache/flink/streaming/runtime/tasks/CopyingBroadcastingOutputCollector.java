@@ -37,6 +37,9 @@ final class CopyingBroadcastingOutputCollector<T> extends BroadcastingOutputColl
         boolean emitted = false;
         int length = outputs.length;
 
+        /**
+         * 和BroadcastingOutputCollector处理逻辑一样，只是前outputs[:-1]output的对StreamRecord做了浅拷贝
+         */
         for (int i = 0; i < length - 1; i++) {
             OutputWithChainingCheck<StreamRecord<T>> output = outputs[i];
             StreamRecord<T> shallowCopy = record.copy(record.getValue());
@@ -57,6 +60,9 @@ final class CopyingBroadcastingOutputCollector<T> extends BroadcastingOutputColl
         boolean emitted = false;
         int length = outputs.length;
 
+        /**
+         * 和BroadcastingOutputCollector处理逻辑一样，只是前outputs[:-1]output的对StreamRecord做了浅拷贝
+         */
         for (int i = 0; i < length - 1; i++) {
             OutputWithChainingCheck<StreamRecord<T>> output = outputs[i];
             StreamRecord<X> shallowCopy = record.copy(record.getValue());

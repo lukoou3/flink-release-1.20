@@ -781,6 +781,13 @@ public abstract class OperatorChain<OUT, OP extends StreamOperator<OUT>>
                 allOutputsArray[i] = allOutputs.get(i);
             }
 
+            /**
+             * 有多个Outputs时会使用BroadcastingOutputCollector输出，BroadcastingOutputCollector内部会遍历Outputs数组输出
+             * 当开始对象重用时创建CopyingBroadcastingOutputCollector，否则BroadcastingOutputCollector，差别不大，就是复制一个新的StreamRecord，浅拷贝，不会拷贝value
+             * 一下两者情况效果基本是一样的，性能也基本是一样的，具体可以看BroadcastingOutputCollector/CopyingBroadcastingOutputCollector的collect(outputTag, record),collect(record)方法：
+             *   使用SideOut，可能调用collect(outputTag, record)或则collect(record)方法
+             *   一个节点输出连接两个节点，调用collect(record)方法，这里可以在下游过滤实现的效果和使用SideOut没什么区别
+             */
             // This is the inverse of creating the normal ChainingOutput.
             // If the chaining output does not copy we need to copy in the broadcast output,
             // otherwise multi-chaining would not work correctly.

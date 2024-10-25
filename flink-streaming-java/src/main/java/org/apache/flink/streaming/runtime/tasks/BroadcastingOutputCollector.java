@@ -79,6 +79,12 @@ class BroadcastingOutputCollector<T> implements WatermarkGaugeExposingOutput<Str
     @Override
     public void collect(StreamRecord<T> record) {
         boolean emitted = false;
+        /**
+         * 不带outputTag的输出:
+         * ChainingOutput输出时会判断this.outputTag != null时才会输出，侧输出不在这里输出
+         * @see ChainingOutput#collectAndCheckIfChained(StreamRecord)
+         * @see ChainingOutput#collect(StreamRecord): 判断this.outputTag != null时才会输出
+         */
         for (OutputWithChainingCheck<StreamRecord<T>> output : outputs) {
             emitted |= output.collectAndCheckIfChained(record);
         }
@@ -90,6 +96,13 @@ class BroadcastingOutputCollector<T> implements WatermarkGaugeExposingOutput<Str
     @Override
     public <X> void collect(OutputTag<X> outputTag, StreamRecord<X> record) {
         boolean emitted = false;
+        /**
+         * 带outputTag的输出:
+         * ChainingOutput输出时会判断outputTag相等时才会输出，侧输出不在这里输出
+         * @see ChainingOutput#collectAndCheckIfChained(OutputTag, StreamRecord)
+         * @see ChainingOutput#collect(OutputTag, StreamRecord)
+         * @see OutputTag#isResponsibleFor(OutputTag, OutputTag)：判断outputTag相等时才会输出
+         */
         for (OutputWithChainingCheck<StreamRecord<T>> output : outputs) {
             emitted |= output.collectAndCheckIfChained(outputTag, record);
         }
