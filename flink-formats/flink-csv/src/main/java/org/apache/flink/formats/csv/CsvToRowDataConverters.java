@@ -98,11 +98,12 @@ public class CsvToRowDataConverters implements Serializable {
             GenericRowData row = new GenericRowData(arity);
             for (int i = 0; i < arity; i++) {
                 JsonNode field;
+                // ignoreParseErrors = true时最外层可以少些字段，不报错
                 // Jackson only supports mapping by name in the first level
                 if (isTopLevel) {
                     field = jsonNode.get(fieldNames[i]);
                 } else {
-                    field = jsonNode.get(i);
+                    field = jsonNode.get(i); // ArrayNode不存在似乎也是返回null
                 }
                 try {
                     if (field == null) {
@@ -175,6 +176,7 @@ public class CsvToRowDataConverters implements Serializable {
                 return this::convertToBytes;
             case DECIMAL:
                 return createDecimalConverter((DecimalType) type);
+            // ARRAY/ROW可以解析?
             case ARRAY:
                 return createArrayConverter((ArrayType) type);
             case ROW:

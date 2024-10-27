@@ -173,6 +173,7 @@ public class RowDataToCsvConverters implements Serializable {
                                 SQL_TIMESTAMP_WITH_LOCAL_TIMEZONE_FORMAT);
             case DECIMAL:
                 return createDecimalRowFieldConverter((DecimalType) fieldType);
+            // ARRAY/ROW可以解析?
             case ARRAY:
                 return createArrayRowFieldConverter((ArrayType) fieldType);
             case ROW:

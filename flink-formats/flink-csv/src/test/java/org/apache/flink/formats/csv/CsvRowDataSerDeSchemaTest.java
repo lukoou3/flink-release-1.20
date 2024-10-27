@@ -372,7 +372,7 @@ public class CsvRowDataSerDeSchemaTest {
                 fieldType,
                 string,
                 value,
-                (deserSchema) -> deserSchema.setNullLiteral("null"),
+                (deserSchema) -> deserSchema.setNullLiteral("null"), // 默认是没设置的
                 (serSchema) -> serSchema.setNullLiteral("null"),
                 ",");
     }
