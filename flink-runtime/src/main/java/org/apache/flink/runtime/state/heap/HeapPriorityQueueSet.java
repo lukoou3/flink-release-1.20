@@ -57,7 +57,8 @@ public class HeapPriorityQueueSet<T extends HeapPriorityQueueElement> extends He
     private final KeyExtractorFunction<T> keyExtractor;
 
     /**
-     * This array contains one hash set per key-group. The sets are used for fast de-duplication and
+     * 此数组每个键组包含一个哈希集。这些集合用于快速重复数据消除和删除元素。
+     * his array contains one hash set per key-group. The sets are used for fast de-duplication and
      * deletes of elements.
      */
     private final HashMap<T, T>[] deduplicationMapsByKeyGroup;
@@ -104,6 +105,7 @@ public class HeapPriorityQueueSet<T extends HeapPriorityQueueElement> extends He
     @Override
     @Nullable
     public T poll() {
+        // 需要从去重集合删除
         final T toRemove = super.poll();
         return toRemove != null ? getDedupMapForElement(toRemove).remove(toRemove) : null;
     }

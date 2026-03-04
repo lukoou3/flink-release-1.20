@@ -41,6 +41,10 @@ import java.util.concurrent.ScheduledFuture;
 import static org.apache.flink.util.Preconditions.checkArgument;
 import static org.apache.flink.util.Preconditions.checkNotNull;
 
+/**
+ * 使用java heap存储timers
+ */
+
 /** {@link InternalTimerService} that stores timers on the Java heap. */
 public class InternalTimerServiceImpl<K, N> implements InternalTimerService<N> {
 
@@ -49,6 +53,7 @@ public class InternalTimerServiceImpl<K, N> implements InternalTimerService<N> {
     protected final TaskIOMetricGroup taskIOMetricGroup;
     protected final KeyContext keyContext;
 
+    // 当前正在运行的处理时间计时器。
     /** Processing time timers that are currently in-flight. */
     protected final KeyGroupedInternalPriorityQueue<TimerHeapInternalTimer<K, N>>
             processingTimeTimersQueue;
@@ -224,6 +229,7 @@ public class InternalTimerServiceImpl<K, N> implements InternalTimerService<N> {
         return currentWatermark;
     }
 
+    // 注册处理时间
     @Override
     public void registerProcessingTimeTimer(N namespace, long time) {
         InternalTimer<K, N> oldHead = processingTimeTimersQueue.peek();
