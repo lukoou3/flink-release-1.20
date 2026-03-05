@@ -1,16 +1,28 @@
 package com.test.stream;
 
+import org.apache.calcite.plan.Context;
+import org.apache.calcite.plan.RelOptCluster;
+import org.apache.calcite.plan.RelOptSchema;
+
 import org.apache.flink.api.dag.Transformation;
 import org.apache.flink.configuration.Configuration;
+import org.apache.flink.connector.datagen.table.DataGenConnectorOptions;
 import org.apache.flink.streaming.api.datastream.DataStream;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.streaming.api.functions.sink.SinkFunction;
+import org.apache.flink.table.api.DataTypes;
+import org.apache.flink.table.api.Schema;
+import org.apache.flink.table.api.TableDescriptor;
 import org.apache.flink.table.api.bridge.internal.AbstractStreamTableEnvironmentImpl;
 import org.apache.flink.table.api.bridge.java.StreamTableEnvironment;
 import org.apache.flink.table.catalog.ResolvedSchema;
 import org.apache.flink.table.data.RowData;
 import org.apache.flink.table.operations.QueryOperation;
+import org.apache.flink.table.planner.calcite.FlinkRelBuilder;
+import org.apache.flink.table.planner.connectors.DynamicSourceUtils;
 import org.apache.flink.table.planner.delegation.PlannerHelper;
+
+import org.apache.flink.table.planner.expressions.converter.ExpressionConverter;
 
 import org.junit.jupiter.api.Test;
 
@@ -328,6 +340,100 @@ public class FlinkSqlQueryPlanCat {
         }).name("sink");
 
         env.execute("testBaseQuery");
+    }
+
+    @Test
+    public void testComputedColumn() throws Exception {
+        Configuration conf = new Configuration();
+        conf.setString("rest.bind-port", "8081-8085");
+        conf.setString(HEARTBEAT_TIMEOUT.key(), "300000");
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.createLocalEnvironmentWithWebUI(
+                conf);
+        env.setParallelism(1);
+        env.getConfig().enableObjectReuse();
+        StreamTableEnvironment tEnv = StreamTableEnvironment.create(env);
+        var sql = """
+                CREATE TABLE tmp_tb (
+                  name string,
+                  cnt int,
+                  name2 as substr(name, 1, 4),
+                  cnt2 as cnt + 100
+                ) WITH (
+                  'connector'='datagen',
+                  'rows-per-second'='1',
+                  'fields.cnt.min'='1',
+                  'fields.cnt.max'='1'
+                )
+                """;
+        tEnv.executeSql(sql);
+
+        sql = """
+              select
+                *, cnt2 * 10 cnt3
+              from tmp_tb
+                """;
+        var rstTable = tEnv.sqlQuery(sql);
+        rstTable.printSchema();
+        QueryOperation queryOperation = rstTable.getQueryOperation();
+        Transformation<RowData> transformation = PlannerHelper.translate(
+                (AbstractStreamTableEnvironmentImpl) tEnv,
+                queryOperation);
+        var dsRst = new DataStream<RowData>(env, transformation);
+        dsRst.addSink(new SinkFunction<RowData>() {
+            @Override
+            public void invoke(RowData value, Context context) throws Exception {
+                System.out.println(value);
+            }
+        }).name("sink");
+
+        env.execute("testComputedColumn");
+    }
+
+    @Test
+    public void testComputedColumn2() throws Exception {
+        Configuration conf = new Configuration();
+        conf.setString("rest.bind-port", "8081-8085");
+        conf.setString(HEARTBEAT_TIMEOUT.key(), "300000");
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.createLocalEnvironmentWithWebUI(
+                conf);
+        env.setParallelism(1);
+        env.getConfig().enableObjectReuse();
+        StreamTableEnvironment tEnv = StreamTableEnvironment.create(env);
+
+        /**
+         * @see DynamicSourceUtils#pushGeneratedProjection(FlinkRelBuilder, ResolvedSchema)
+         * @see ExpressionConverter
+         * @see FlinkRelBuilder#FlinkRelBuilder(Context, RelOptCluster, RelOptSchema)
+         */
+        tEnv.createTable("tmp_tb", TableDescriptor.forConnector("datagen").schema(
+                Schema.newBuilder()
+                        .column("name", DataTypes.STRING())
+                        .column("cnt", DataTypes.INT())
+                        .columnByExpression("name2", "substr(name, 1, 4)")
+                        .columnByExpression("cnt2", "cnt + 100")
+                        .build())
+                .option(DataGenConnectorOptions.ROWS_PER_SECOND, 1L)
+                .build());
+        var sql = """
+              select
+                *, cnt2 * 10 cnt3
+              from tmp_tb
+                """;
+        var rstTable = tEnv.sqlQuery(sql);
+        rstTable.printSchema();
+        QueryOperation queryOperation = rstTable.getQueryOperation();
+        Transformation<RowData> transformation = PlannerHelper.translate(
+                (AbstractStreamTableEnvironmentImpl) tEnv,
+                queryOperation);
+        var dsRst = new DataStream<RowData>(env, transformation);
+        dsRst.addSink(new SinkFunction<RowData>() {
+            @Override
+            public void invoke(RowData value, Context context) throws Exception {
+                System.out.println(value);
+            }
+        }).name("sink");
+
+        env.execute("testComputedColumn2");
     }
 
 }
