@@ -1935,6 +1935,7 @@ public class RelBuilder {
         return this;
     }
 
+    // 创建Project: sql ast 转换为 逻辑计划
     /** Creates a {@link Project} of the given expressions. */
     public RelBuilder project(RexNode... nodes) {
         return project(ImmutableList.copyOf(nodes));

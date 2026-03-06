@@ -7,18 +7,32 @@ import org.apache.calcite.rel.core.TableScan;
 import org.apache.calcite.rel.logical.LogicalFilter;
 import org.apache.calcite.rel.logical.LogicalProject;
 import org.apache.calcite.rel.logical.LogicalTableScan;
+
+import org.apache.flink.api.dag.Transformation;
 import org.apache.flink.configuration.Configuration;
 import org.apache.flink.streaming.api.datastream.DataStream;
+import org.apache.flink.streaming.api.datastream.SingleOutputStreamOperator;
 import org.apache.flink.streaming.api.environment.StreamExecutionEnvironment;
 import org.apache.flink.streaming.api.functions.sink.SinkFunction;
 import org.apache.flink.table.api.TableResult;
+import org.apache.flink.table.api.bridge.internal.AbstractStreamTableEnvironmentImpl;
 import org.apache.flink.table.api.bridge.java.StreamTableEnvironment;
+import org.apache.flink.table.api.bridge.java.internal.StreamTableEnvironmentImpl;
+import org.apache.flink.table.catalog.CatalogManager;
+import org.apache.flink.table.catalog.DataTypeFactory;
+import org.apache.flink.table.data.GenericRowData;
 import org.apache.flink.table.data.RowData;
+import org.apache.flink.table.data.StringData;
+import org.apache.flink.table.operations.QueryOperation;
 import org.apache.flink.table.planner.delegation.PlannerBase;
+import org.apache.flink.table.planner.delegation.PlannerHelper;
 import org.apache.flink.table.planner.plan.nodes.calcite.LogicalSink;
 import org.apache.flink.table.planner.plan.nodes.calcite.Sink;
 import org.apache.flink.table.planner.plan.nodes.exec.ExecNodeGraphGenerator;
 import org.apache.flink.table.planner.plan.nodes.physical.FlinkPhysicalRel;
+import org.apache.flink.table.runtime.typeutils.InternalTypeInfo;
+
+import org.junit.jupiter.api.Test;
 
 
 import java.util.List;
@@ -135,6 +149,49 @@ public class FlinkSqlTest {
         TableResult tableResult = tEnv.executeSql(sql);
         System.out.println(tableResult);
 
+        env.execute("test");
+    }
+
+    @Test
+    public void testFromDataStream() throws Exception {
+        Configuration conf = new Configuration();
+        conf.setString("rest.bind-port", "8081-8085");
+        conf.setString(HEARTBEAT_TIMEOUT.key(), "300000");
+        StreamExecutionEnvironment env = StreamExecutionEnvironment.createLocalEnvironmentWithWebUI(conf);
+        env.setParallelism(1);
+        env.getConfig().enableObjectReuse();
+        StreamTableEnvironment tEnv = StreamTableEnvironment.create(env);
+        CatalogManager catalogManager = ((StreamTableEnvironmentImpl)tEnv).getCatalogManager();
+        DataTypeFactory dataTypeFactory = catalogManager.getDataTypeFactory();
+        InternalTypeInfo<RowData> typeInformation = InternalTypeInfo.of(dataTypeFactory.createDataType("ROW<name string, age int, cnt bigint>").getLogicalType());
+        SingleOutputStreamOperator<RowData> rowDataDs = env.fromSequence(1, 10000).map(i -> {
+            if (i % 5 > 0) {
+                RowData row = GenericRowData.of(StringData.fromString(Long.toString(i % 4)), Integer.valueOf((int) (i % 100)), Long.valueOf(i % 100));
+                return row;
+            } else {
+                return GenericRowData.of(null, null, null);
+            }
+        }, typeInformation);
+
+        //tEnv.createTemporaryTable("SourceTableB", sourceDescriptor);
+
+        /**
+         * @see ExternalDynamicSource
+         * @see InputConversionOperator
+         * @see IdentityConverter
+         */
+        var rstTable = tEnv.fromDataStream(rowDataDs);
+        rstTable.printSchema();
+        QueryOperation queryOperation = rstTable.getQueryOperation();
+        Transformation<RowData> transformation = PlannerHelper.translate((AbstractStreamTableEnvironmentImpl) tEnv, queryOperation);
+        var dsRst = new DataStream<RowData>(env, transformation);
+        dsRst.addSink(new SinkFunction<RowData>() {
+            @Override
+            public void invoke(RowData value, Context context) throws Exception {
+                Thread.sleep(1000);
+                System.out.println(value);
+            }
+        }).name("sink");
         env.execute("test");
     }
 

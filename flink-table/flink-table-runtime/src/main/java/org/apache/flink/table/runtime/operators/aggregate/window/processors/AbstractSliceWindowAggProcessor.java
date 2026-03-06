@@ -71,6 +71,7 @@ public abstract class AbstractSliceWindowAggProcessor extends AbstractWindowAggP
     @Override
     public void open(Context<Long> context) throws Exception {
         super.open(context);
+        // 这里也是使用堆外内存
         this.windowBuffer =
                 windowBufferFactory.create(
                         ctx.getOperatorOwner(),

@@ -1,8 +1,18 @@
 package com.test.stream;
 
+import com.google.common.collect.ImmutableSet;
 import org.apache.calcite.plan.Context;
 import org.apache.calcite.plan.RelOptCluster;
 import org.apache.calcite.plan.RelOptSchema;
+
+import org.apache.calcite.plan.RelTraitSet;
+import org.apache.calcite.rel.RelNode;
+import org.apache.calcite.rel.core.RelFactories;
+import org.apache.calcite.rel.logical.LogicalFilter;
+import org.apache.calcite.rex.RexNode;
+import org.apache.calcite.sql.SqlNode;
+import org.apache.calcite.sql.SqlSelect;
+import org.apache.calcite.sql2rel.SqlToRelConverter;
 
 import org.apache.flink.api.dag.Transformation;
 import org.apache.flink.configuration.Configuration;
@@ -25,6 +35,8 @@ import org.apache.flink.table.planner.delegation.PlannerHelper;
 import org.apache.flink.table.planner.expressions.converter.ExpressionConverter;
 
 import org.junit.jupiter.api.Test;
+
+import java.util.Set;
 
 import static org.apache.flink.configuration.HeartbeatManagerOptions.HEARTBEAT_TIMEOUT;
 
@@ -82,6 +94,15 @@ public class FlinkSqlQueryPlanCat {
                 select name,`power`,age,age + 10 age2 from heros
                 where age <= 50
                 """;
+
+        /**
+         * LogicalFilter的转换：
+         * @see SqlToRelConverter#convertSelectImpl(SqlToRelConverter.Blackboard, SqlSelect)
+         * @see SqlToRelConverter#convertWhere(SqlToRelConverter.Blackboard, SqlNode)
+         * @see RelFactories.FilterFactoryImpl#createFilter(RelNode, RexNode, Set)
+         * @see LogicalFilter#LogicalFilter(RelOptCluster, RelTraitSet, RelNode, RexNode, ImmutableSet)
+         *
+         */
         var rstTable = tEnv.sqlQuery(sql);
         rstTable.printSchema();
         QueryOperation queryOperation = rstTable.getQueryOperation();

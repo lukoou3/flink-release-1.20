@@ -124,6 +124,7 @@ public final class WindowRankProcessor implements SlicingWindowProcessor<Long> {
         this.windowState =
                 new WindowMapState<>(
                         (InternalMapState<RowData, Long, RowData, List<RowData>>) state);
+        // 使用堆外内存
         this.windowBuffer =
                 bufferFactory.create(
                         ctx.getOperatorOwner(),

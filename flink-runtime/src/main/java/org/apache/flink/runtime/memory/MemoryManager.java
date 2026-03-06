@@ -47,6 +47,7 @@ import java.util.function.LongConsumer;
 import static org.apache.flink.core.memory.MemorySegmentFactory.allocateOffHeapUnsafeMemory;
 
 /**
+ * 只使用堆外内存
  * The memory manager governs the memory that Flink uses for sorting, hashing, caching or off-heap
  * state backends (e.g. RocksDB). Memory is represented either in {@link MemorySegment}s of equal
  * size or in reserved chunks of certain size. Operators allocate the memory either by requesting a
